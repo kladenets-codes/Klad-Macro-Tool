@@ -1,3 +1,4 @@
+<img width="1102" height="832" alt="image" src="https://github.com/user-attachments/assets/dcf88cc7-97c4-4e81-96b6-59cf5353e2f0" />
 # Template Config Manager v3
 
 **Çok Amaçlı Görsel Makro ve Combo Box Sistemi**

@@ -1,0 +1,73 @@
+{
+  "groups": [
+    {
+      "id": "group_rogue_main",
+      "name": "Rogue Main",
+      "enabled": true,
+      "toggle_key": "num lock",
+      "spam_key": "\"",
+      "spam_enabled": true,
+      "spam_timing": {
+        "pre_delay": 1,
+        "hold_time": 1,
+        "post_delay": 1
+      },
+      "spam_key_interval": 0.025,
+      "search_region": [
+        430,
+        275,
+        750,
+        460
+      ],
+      "cycle_delay": 0.01,
+      "templates": [
+        {
+          "name": "purple",
+          "file": "purple.png",
+          "enabled": true,
+          "threshold": 0.95,
+          "key_combo": "alt+\"",
+          "color": "#800080",
+          "timing": {
+            "pre_delay": 1,
+            "hold_time": 1,
+            "post_delay": 1
+          },
+          "use_macro": false,
+          "macro": []
+        },
+        {
+          "name": "yellow",
+          "file": "yellow.png",
+          "enabled": true,
+          "threshold": 0.9,
+          "key_combo": "t",
+          "color": "#FFFF00",
+          "timing": {
+            "pre_delay": 1,
+            "hold_time": 1,
+            "post_delay": 1
+          }
+        },
+        {
+          "name": "orange",
+          "file": "orange.png",
+          "enabled": true,
+          "threshold": 0.9875,
+          "key_combo": "shift+\"",
+          "color": "#FF8C00",
+          "timing": {
+            "pre_delay": 1,
+            "hold_time": 1,
+            "post_delay": 1
+          },
+          "use_macro": false,
+          "macro": []
+        }
+      ]
+    }
+  ],
+  "global_settings": {
+    "debug_enabled": true
+  }
+}

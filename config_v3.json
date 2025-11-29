@@ -3,7 +3,7 @@
     {
       "id": "group_rogue_main",
       "name": "Rogue Main",
-      "enabled": true,
+      "enabled": false,
       "toggle_key": "num lock",
       "spam_key": "\"",
       "spam_enabled": true,
@@ -24,9 +24,9 @@
         {
           "name": "purple",
           "file": "purple.png",
-          "enabled": true,
+          "enabled": false,
           "threshold": 0.95,
-          "key_combo": "alt+\"",
+          "key_combo": "7",
           "color": "#800080",
           "timing": {
             "pre_delay": 1,
@@ -39,7 +39,7 @@
         {
           "name": "yellow",
           "file": "yellow.png",
-          "enabled": true,
+          "enabled": false,
           "threshold": 0.9,
           "key_combo": "t",
           "color": "#FFFF00",
@@ -52,7 +52,7 @@
         {
           "name": "orange",
           "file": "orange.png",
-          "enabled": true,
+          "enabled": false,
           "threshold": 0.9875,
           "key_combo": "shift+\"",
           "color": "#FF8C00",
@@ -65,9 +65,122 @@
           "macro": []
         }
       ]
+    },
+    {
+      "id": "574fd85e-dcf5-4066-89c0-77138ecdfb96",
+      "name": "tab",
+      "enabled": false,
+      "toggle_key": "f12",
+      "spam_key": "tab",
+      "spam_enabled": true,
+      "spam_timing": {
+        "pre_delay": 1,
+        "hold_time": 1,
+        "post_delay": 250
+      },
+      "spam_key_interval": 0.025,
+      "search_region": [
+        430,
+        275,
+        750,
+        460
+      ],
+      "cycle_delay": 0.01,
+      "templates": []
+    },
+    {
+      "id": "5dfdd545-9e42-48a4-b717-1d74a1e1909f",
+      "name": "rogue def",
+      "enabled": false,
+      "toggle_key": "f11",
+      "spam_key": null,
+      "spam_enabled": false,
+      "spam_timing": {
+        "pre_delay": 1,
+        "hold_time": 1,
+        "post_delay": 1
+      },
+      "spam_key_interval": 0.025,
+      "search_region": [
+        895,
+        723,
+        1044,
+        780
+      ],
+      "cycle_delay": 0.01,
+      "templates": [
+        {
+          "name": "crimson vial",
+          "file": "crimson vial.png",
+          "enabled": true,
+          "threshold": 0.9,
+          "key_combo": "4",
+          "color": "#ff0000",
+          "timing": {
+            "pre_delay": 1,
+            "hold_time": 1,
+            "post_delay": 1
+          },
+          "use_macro": false,
+          "macro": []
+        },
+        {
+          "name": "evas",
+          "file": "evas.png",
+          "enabled": true,
+          "threshold": 0.9,
+          "key_combo": "5",
+          "color": "#9daa55",
+          "timing": {
+            "pre_delay": 1,
+            "hold_time": 1,
+            "post_delay": 1
+          },
+          "use_macro": false,
+          "macro": []
+        },
+        {
+          "name": "cloak of shadows",
+          "file": "cloak of shadows.png",
+          "enabled": true,
+          "threshold": 0.9,
+          "key_combo": "3",
+          "color": "#8a1c6f",
+          "timing": {
+            "pre_delay": 1,
+            "hold_time": 1,
+            "post_delay": 1
+          },
+          "use_macro": false,
+          "macro": []
+        }
+      ]
+    },
+    {
+      "id": "6f434283-98ce-462f-974b-c74c602b6e4f",
+      "name": "warr",
+      "enabled": true,
+      "toggle_key": "num lock",
+      "spam_key": "\"",
+      "spam_enabled": true,
+      "spam_timing": {
+        "pre_delay": 1,
+        "hold_time": 1,
+        "post_delay": 1
+      },
+      "spam_key_interval": 0.025,
+      "search_region": [
+        430,
+        275,
+        750,
+        460
+      ],
+      "cycle_delay": 0.01,
+      "templates": []
     }
   ],
   "global_settings": {
-    "debug_enabled": true
+    "debug_enabled": true,
+    "fps_overlay_enabled": false
   }
 }

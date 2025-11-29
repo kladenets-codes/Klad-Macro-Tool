@@ -1,5 +1,5 @@
 """
-Template Configuration Manager v3
+Klad Macro Tool
 Groups System with Multiprocessing
 """
 
@@ -311,7 +311,7 @@ def group_worker(group_data, command_queue, status_queue, running_flag):
 class ConfigManager:
     def __init__(self, root):
         self.root = root
-        self.root.title("Template Configuration Manager v3 - Groups")
+        self.root.title("Klad Macro Tool")
         self.root.geometry("1100x800")
         self.root.minsize(950, 700)
 
@@ -333,7 +333,8 @@ class ConfigManager:
         # Groups data
         self.groups = []
         self.global_settings = {
-            "debug_enabled": False
+            "debug_enabled": False,
+            "fps_overlay_enabled": True
         }
 
         # Process management
@@ -636,6 +637,17 @@ class ConfigManager:
             command=self.toggle_debug_mode
         ).pack(anchor="w")
 
+        self.fps_overlay_var = ctk.BooleanVar(value=self.global_settings.get("fps_overlay_enabled", True))
+        ctk.CTkCheckBox(
+            debug_content,
+            text="FPS Overlay (Ekranda göster)",
+            variable=self.fps_overlay_var,
+            font=ctk.CTkFont(size=13),
+            fg_color=self.colors["accent"],
+            hover_color=self.colors["accent_hover"],
+            command=self.toggle_fps_overlay
+        ).pack(anchor="w", pady=(8, 0))
+
         # Log Console card
         log_card = ctk.CTkFrame(settings_scroll, fg_color=self.colors["bg_secondary"], corner_radius=12)
         log_card.pack(fill="both", expand=True, pady=(0, 15))
@@ -776,16 +788,38 @@ Kullanım:
         for i, group in enumerate(self.groups):
             self.create_group_card(i, group)
 
+    def get_conflicting_keys(self):
+        """Çakışan toggle key'leri bul (sadece aktif gruplar arasında)"""
+        key_counts = {}
+        for group in self.groups:
+            if group.get('enabled', True):
+                key = group.get('toggle_key', '').lower()
+                if key:
+                    key_counts[key] = key_counts.get(key, 0) + 1
+        return {k for k, v in key_counts.items() if v > 1}
+
     def create_group_card(self, index, group):
         """Create a group card"""
         is_selected = index == self.selected_group_index
         is_enabled = group.get('enabled', True)
 
+        # Çakışan key kontrolü
+        conflicting_keys = self.get_conflicting_keys()
+        has_conflict = is_enabled and group.get('toggle_key', '').lower() in conflicting_keys
+
+        # Renk belirleme
+        if is_selected:
+            card_color = self.colors["accent"]
+        elif has_conflict:
+            card_color = "#4a2020"  # Koyu kırmızı
+        elif is_enabled:
+            card_color = self.colors["bg_dark"]
+        else:
+            card_color = self.colors["bg_secondary"]
+
         card = ctk.CTkFrame(
             self.group_scroll,
-            fg_color=self.colors["accent"] if is_selected else (
-                self.colors["bg_dark"] if is_enabled else self.colors["bg_secondary"]
-            ),
+            fg_color=card_color,
             corner_radius=10,
             height=60
         )
@@ -795,17 +829,25 @@ Kullanım:
         content = ctk.CTkFrame(card, fg_color="transparent")
         content.pack(fill="both", expand=True, padx=12, pady=10)
 
-        # Status indicator (yeşil/kırmızı nokta)
-        status_color = "#00ff88" if is_enabled else "#ff4444"
-        status_indicator = ctk.CTkFrame(
+        # Toggle switch (grup aktif/pasif)
+        toggle_switch = ctk.CTkSwitch(
             content,
-            width=8,
-            height=8,
-            corner_radius=4,
-            fg_color=status_color
+            text="",
+            width=36,
+            height=18,
+            switch_width=36,
+            switch_height=18,
+            fg_color=self.colors["border"],
+            progress_color=self.colors["success"],
+            button_color="#ffffff",
+            button_hover_color="#eeeeee",
+            command=lambda idx=index: self.toggle_group_enabled(idx)
         )
-        status_indicator.pack(side="left", padx=(0, 10))
-        status_indicator.pack_propagate(False)
+        toggle_switch.pack(side="left", padx=(0, 10))
+        if is_enabled:
+            toggle_switch.select()
+        else:
+            toggle_switch.deselect()
 
         # Info frame
         info_frame = ctk.CTkFrame(content, fg_color="transparent")
@@ -850,7 +892,7 @@ Kullanım:
         key_badge.pack(side="right")
 
         # Click handlers
-        for widget in [card, content, info_frame, name_label, spam_label, key_badge, status_indicator]:
+        for widget in [card, content, info_frame, name_label, spam_label, key_badge]:
             widget.bind("<Button-1>", lambda e, idx=index: self.select_group(idx))
 
     def select_group(self, index):
@@ -860,6 +902,15 @@ Kullanım:
         self.refresh_group_list()
         self.update_group_details()
         self.refresh_template_list()
+
+    def toggle_group_enabled(self, index):
+        """Toggle group enabled/disabled"""
+        if index < len(self.groups):
+            current = self.groups[index].get('enabled', True)
+            self.groups[index]['enabled'] = not current
+            status = "aktif" if not current else "pasif"
+            self.add_log(f"Grup '{self.groups[index]['name']}' {status} yapıldı.", "INFO")
+            self.refresh_group_list()
 
     def update_group_details(self):
         """Update the group details panel"""
@@ -888,6 +939,13 @@ Kullanım:
         group = self.groups[self.selected_group_index]
         templates = group.get('templates', [])
 
+        # Drop indicator for templates
+        self.template_drop_indicator = ctk.CTkFrame(
+            self.template_scroll,
+            fg_color=self.colors["accent"],
+            height=3
+        )
+
         for i, template in enumerate(templates):
             self.create_template_card(i, template)
 
@@ -906,11 +964,28 @@ Kullanım:
         )
         card.pack(fill="x", pady=4, padx=4)
         card.pack_propagate(False)
+        card.template_index = index  # Store index for drag & drop
 
         content = ctk.CTkFrame(card, fg_color="transparent")
         content.pack(fill="both", expand=True, padx=12, pady=10)
 
-        # Color indicator - daha belirgin
+        # Drag handle
+        drag_handle = ctk.CTkLabel(
+            content,
+            text="≡",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color=self.colors["text_secondary"],
+            width=20,
+            cursor="fleur"
+        )
+        drag_handle.pack(side="left", padx=(0, 8))
+
+        # Drag & drop bindings
+        drag_handle.bind("<Button-1>", lambda e, c=card, idx=index: self.template_drag_start(e, c, idx))
+        drag_handle.bind("<B1-Motion>", lambda e, c=card: self.template_drag_motion(e, c))
+        drag_handle.bind("<ButtonRelease-1>", lambda e, c=card: self.template_drag_end(e, c))
+
+        # Color indicator
         color_indicator = ctk.CTkFrame(
             content,
             width=5,
@@ -984,6 +1059,86 @@ Kullanım:
         if self.selected_group_index is not None:
             self.groups[self.selected_group_index]['templates'][index]['enabled'] = var.get()
             self.refresh_template_list()
+
+    # ==================== TEMPLATE DRAG & DROP ====================
+
+    def template_drag_start(self, event, card, index):
+        """Start dragging a template"""
+        self.template_dragging = True
+        self.template_drag_index = index
+        self.template_drag_card = card
+        self.template_drag_start_y = event.y_root
+
+    def template_drag_motion(self, event, card):
+        """Handle template drag motion"""
+        if not getattr(self, 'template_dragging', False):
+            return
+
+        # Find drop position
+        cards = [w for w in self.template_scroll.winfo_children()
+                 if isinstance(w, ctk.CTkFrame) and hasattr(w, 'template_index')]
+
+        drop_index = len(cards)
+        for i, c in enumerate(cards):
+            try:
+                card_y = c.winfo_rooty()
+                card_height = c.winfo_height()
+                if event.y_root < card_y + card_height // 2:
+                    drop_index = i
+                    break
+            except:
+                pass
+
+        self.template_drop_index = drop_index
+        self.show_template_drop_indicator(drop_index, cards)
+
+    def template_drag_end(self, event, card):
+        """End template drag"""
+        if not getattr(self, 'template_dragging', False):
+            return
+
+        self.template_dragging = False
+        self.hide_template_drop_indicator()
+
+        if self.selected_group_index is None:
+            return
+
+        from_index = self.template_drag_index
+        to_index = getattr(self, 'template_drop_index', from_index)
+
+        # Adjust index
+        if to_index > from_index:
+            to_index -= 1
+
+        if from_index != to_index:
+            templates = self.groups[self.selected_group_index]['templates']
+            template = templates.pop(from_index)
+            templates.insert(to_index, template)
+            self.add_log(f"Template sırası değişti: {from_index + 1} -> {to_index + 1}", "INFO")
+            self.refresh_template_list()
+
+    def show_template_drop_indicator(self, index, cards):
+        """Show drop indicator at position"""
+        try:
+            if not hasattr(self, 'template_drop_indicator') or not self.template_drop_indicator.winfo_exists():
+                return
+
+            self.template_drop_indicator.pack_forget()
+
+            if index < len(cards) and cards[index].winfo_exists():
+                self.template_drop_indicator.pack(before=cards[index], fill="x", pady=2, padx=4)
+            else:
+                self.template_drop_indicator.pack(fill="x", pady=2, padx=4)
+        except:
+            pass
+
+    def hide_template_drop_indicator(self):
+        """Hide drop indicator"""
+        try:
+            if hasattr(self, 'template_drop_indicator') and self.template_drop_indicator.winfo_exists():
+                self.template_drop_indicator.pack_forget()
+        except:
+            pass
 
     # ==================== CRUD OPERATIONS ====================
 
@@ -1113,6 +1268,19 @@ Kullanım:
         """Start all group processes"""
         if not self.groups:
             messagebox.showwarning("Uyarı", "Hiç grup yok!")
+            return
+
+        # Aktif grup var mı kontrol et
+        enabled_groups = [g for g in self.groups if g.get('enabled', True)]
+        if not enabled_groups:
+            messagebox.showwarning("Uyarı", "Hiç aktif grup yok! En az bir grubu aktif yapın.")
+            return
+
+        # Çakışan key kontrolü
+        conflicting_keys = self.get_conflicting_keys()
+        if conflicting_keys:
+            keys_str = ", ".join(k.upper() for k in conflicting_keys)
+            messagebox.showerror("Hata", f"Çakışan toggle key'ler var: {keys_str}\n\nAynı tuşu kullanan gruplardan birini pasif yapın veya tuşlarını değiştirin.")
             return
 
         self.save_config()
@@ -1305,6 +1473,10 @@ Kullanım:
         if not self.fps_data:
             return
 
+        # FPS overlay kapalıysa gösterme
+        if not self.fps_overlay_var.get():
+            return
+
         # Overlay yoksa oluştur
         if self.fps_overlay is None:
             self.create_fps_overlay()
@@ -1463,10 +1635,21 @@ Kullanım:
         else:
             self.add_log("Debug modu kapatıldı.", "INFO")
 
+    def toggle_fps_overlay(self):
+        """FPS overlay'i aç/kapa"""
+        if self.fps_overlay_var.get():
+            self.add_log("FPS overlay açıldı.", "INFO")
+            if self.bot_active:
+                self.create_fps_overlay()
+        else:
+            self.add_log("FPS overlay kapatıldı.", "INFO")
+            self.destroy_fps_overlay()
+
     def save_config(self):
         """Save config to JSON"""
         try:
             self.global_settings["debug_enabled"] = self.debug_var.get()
+            self.global_settings["fps_overlay_enabled"] = self.fps_overlay_var.get()
 
             data = {
                 "groups": self.groups,
@@ -1618,12 +1801,6 @@ class AddGroupDialog:
 
         if not self.selected_key:
             messagebox.showwarning("Uyarı", "Start/Stop tuşu seçmelisiniz!")
-            return
-
-        # Check for duplicate hotkey
-        used_by = self.manager.is_hotkey_used(self.selected_key)
-        if used_by:
-            messagebox.showwarning("Uyarı", f"Bu tuş zaten '{used_by}' grubu tarafından kullanılıyor!")
             return
 
         # Get spam timing
@@ -1788,12 +1965,6 @@ class EditGroupDialog:
 
         if not self.selected_key:
             messagebox.showwarning("Uyarı", "Start/Stop tuşu seçmelisiniz!")
-            return
-
-        # Check for duplicate hotkey
-        used_by = self.manager.is_hotkey_used(self.selected_key, self.group.get('id'))
-        if used_by:
-            messagebox.showwarning("Uyarı", f"Bu tuş zaten '{used_by}' grubu tarafından kullanılıyor!")
             return
 
         # Get spam timing

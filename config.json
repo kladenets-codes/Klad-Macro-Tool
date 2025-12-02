@@ -3,7 +3,7 @@
     {
       "id": "group_rogue_main",
       "name": "Rogue Main",
-      "enabled": false,
+      "enabled": true,
       "toggle_key": "num lock",
       "spam_key": "\"",
       "spam_enabled": true,
@@ -24,7 +24,7 @@
         {
           "name": "purple",
           "file": "purple.png",
-          "enabled": false,
+          "enabled": true,
           "threshold": 0.95,
           "key_combo": "7",
           "color": "#800080",
@@ -39,7 +39,7 @@
         {
           "name": "yellow",
           "file": "yellow.png",
-          "enabled": false,
+          "enabled": true,
           "threshold": 0.9,
           "key_combo": "t",
           "color": "#FFFF00",
@@ -52,7 +52,7 @@
         {
           "name": "orange",
           "file": "orange.png",
-          "enabled": false,
+          "enabled": true,
           "threshold": 0.9875,
           "key_combo": "shift+\"",
           "color": "#FF8C00",
@@ -91,7 +91,7 @@
     {
       "id": "5dfdd545-9e42-48a4-b717-1d74a1e1909f",
       "name": "rogue def",
-      "enabled": false,
+      "enabled": true,
       "toggle_key": "f11",
       "spam_key": null,
       "spam_enabled": false,
@@ -159,7 +159,7 @@
     {
       "id": "6f434283-98ce-462f-974b-c74c602b6e4f",
       "name": "warr",
-      "enabled": true,
+      "enabled": false,
       "toggle_key": "num lock",
       "spam_key": "\"",
       "spam_enabled": true,

@@ -42,6 +42,7 @@ Klad Macro Tool, oyunlarda skill ikonları, buff/debuff göstergeleri veya herha
 - **FPS Overlay** - Gerçek zamanlı arama hızı göstergesi
 - **Drag & Drop** - Template ve makro sıralamasını sürükle-bırak ile değiştir
 - **Modern Arayüz** - Karanlık tema, sezgisel kullanım
+- **Group Import/Export** - Grupları metin olarak paylaş ve içe aktar
 
 ## Kurulum
 
@@ -62,6 +63,23 @@ python klad_macro_tool.py
 3. **Template ekle** - Ekrandan görsel yakala
 4. **Tuş/Makro ayarla** - Eşleşince ne yapılacağını belirle
 5. **Başlat** - Toggle key ile aktifleştir
+
+## Group Import/Export
+
+Gruplarınızı arkadaşlarınızla veya farklı bilgisayarlarınız arasında paylaşabilirsiniz.
+
+### Export (Dışa Aktarma)
+1. Paylaşmak istediğiniz grubu seçin
+2. "Export" butonuna tıklayın
+3. Açılan penceredeki kodu "Kopyala" ile panoya alın
+4. Kodu paylaşın veya saklayın
+
+### Import (İçe Aktarma)
+1. "Import" butonuna tıklayın
+2. Aldığınız export kodunu yapıştırın
+3. "Import Et" ile grubu ekleyin
+
+> Export kodu grup ayarlarını ve template görsellerini (base64) içerir. Yeni bir grup ID'si ile eklenir.
 
 ## Gereksinimler
 

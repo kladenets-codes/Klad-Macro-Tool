@@ -10,9 +10,9 @@
 
 **[Dokümantasyon ve Demo Sayfası](https://kladenets-codes.github.io/Klad-Macro-Tool/)**
 
-<img src="docs/images/wow.png" width="48" alt="WoW"> &nbsp;
-<img src="docs/images/ko.png" width="48" alt="KO"> &nbsp;
-<img src="docs/images/bluestacks.png" width="48" alt="Emulator">
+![WoW](docs/images/wow.png) &nbsp;
+![KO](docs/images/ko.png) &nbsp;
+![Emulator](docs/images/bluestacks.png)
 
 </div>
 

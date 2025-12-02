@@ -491,6 +491,36 @@ class ConfigManager:
             command=self.delete_group
         ).pack(side="left")
 
+        # Import/Export buttons
+        ie_btn_frame = ctk.CTkFrame(left_panel, fg_color="transparent", height=40)
+        ie_btn_frame.pack(fill="x", padx=15, pady=(0, 12))
+
+        ctk.CTkButton(
+            ie_btn_frame,
+            text="Export",
+            width=80,
+            height=28,
+            corner_radius=6,
+            fg_color="#2d5a27",
+            hover_color="#3d7a37",
+            font=ctk.CTkFont(size=11),
+            anchor="center",
+            command=self.export_group
+        ).pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(
+            ie_btn_frame,
+            text="Import",
+            width=80,
+            height=28,
+            corner_radius=6,
+            fg_color="#5a4a27",
+            hover_color="#7a6a47",
+            font=ctk.CTkFont(size=11),
+            anchor="center",
+            command=self.import_group
+        ).pack(side="left")
+
         # Right panel - Group details
         right_panel = ctk.CTkFrame(main_container, fg_color="transparent")
         right_panel.pack(side="right", fill="both", expand=True)
@@ -517,6 +547,16 @@ class ConfigManager:
             text_color=self.colors["text_secondary"]
         )
         self.group_info_label.pack(anchor="w", pady=(5, 0))
+
+        self.group_notes_label = ctk.CTkLabel(
+            self.group_details_content,
+            text="",
+            font=ctk.CTkFont(size=11),
+            text_color=self.colors["text_secondary"],
+            wraplength=500,
+            justify="left"
+        )
+        self.group_notes_label.pack(anchor="w", pady=(5, 0))
 
         # Templates section for selected group
         templates_frame = ctk.CTkFrame(right_panel, fg_color=self.colors["bg_secondary"], corner_radius=12)
@@ -917,6 +957,7 @@ Kullanım:
         if self.selected_group_index is None or self.selected_group_index >= len(self.groups):
             self.group_name_label.configure(text="Bir grup seçin...")
             self.group_info_label.configure(text="")
+            self.group_notes_label.configure(text="")
             return
 
         group = self.groups[self.selected_group_index]
@@ -927,6 +968,13 @@ Kullanım:
 
         info = f"Toggle: {group.get('toggle_key', '?').upper()}  |  {spam_info}  |  Bölge: {region[0]},{region[1]}-{region[2]},{region[3]}"
         self.group_info_label.configure(text=info)
+
+        # Notları göster
+        notes = group.get('notes', '')
+        if notes:
+            self.group_notes_label.configure(text=f"Not: {notes}")
+        else:
+            self.group_notes_label.configure(text="")
 
     def refresh_template_list(self):
         """Refresh template list for selected group"""
@@ -1166,6 +1214,19 @@ Kullanım:
             self.refresh_group_list()
             self.update_group_details()
             self.refresh_template_list()
+
+    def export_group(self):
+        """Export selected group as text"""
+        if self.selected_group_index is None:
+            messagebox.showwarning("Uyarı", "Önce bir grup seçin!")
+            return
+
+        group = self.groups[self.selected_group_index]
+        ExportGroupDialog(self.root, group)
+
+    def import_group(self):
+        """Import group from text"""
+        ImportGroupDialog(self.root, self)
 
     def add_template(self):
         """Add template to selected group"""
@@ -1587,6 +1648,7 @@ Kullanım:
                     "spam_key_interval": 0.025,
                     "search_region": [430, 275, 750, 460],
                     "cycle_delay": 0.01,
+                    "notes": "",
                     "templates": []
                 }
             ]
@@ -1681,7 +1743,7 @@ class AddGroupDialog:
 
         self.top = ctk.CTkToplevel(parent)
         self.top.title("Yeni Grup Ekle")
-        self.top.geometry("500x550")
+        self.top.geometry("500x650")
         self.top.transient(parent)
         self.top.grab_set()
         self.top.resizable(False, False)
@@ -1755,6 +1817,16 @@ class AddGroupDialog:
                      fg_color="#333333", hover_color="#444444",
                      command=self.select_region).pack(side="left")
 
+        # Notes
+        notes_frame = ctk.CTkFrame(main, fg_color="#1a1a1a", corner_radius=10)
+        notes_frame.pack(fill="x", pady=10)
+
+        ctk.CTkLabel(notes_frame, text="Notlar:", font=ctk.CTkFont(size=12),
+                    text_color="#888888").pack(anchor="w", padx=15, pady=(10, 5))
+        self.notes_entry = ctk.CTkTextbox(notes_frame, width=420, height=60,
+                                          fg_color="#0d0d0d", corner_radius=6)
+        self.notes_entry.pack(padx=15, pady=(0, 10))
+
         # Buttons
         btn_frame = ctk.CTkFrame(main, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(20, 0))
@@ -1822,6 +1894,7 @@ class AddGroupDialog:
             "spam_key_interval": 0.025,
             "search_region": self.search_region,
             "cycle_delay": 0.01,
+            "notes": self.notes_entry.get("1.0", "end-1c").strip(),
             "templates": []
         }
 
@@ -1842,7 +1915,7 @@ class EditGroupDialog:
 
         self.top = ctk.CTkToplevel(parent)
         self.top.title(f"Grubu Düzenle: {self.group['name']}")
-        self.top.geometry("500x550")
+        self.top.geometry("500x650")
         self.top.transient(parent)
         self.top.grab_set()
         self.top.resizable(False, False)
@@ -1923,6 +1996,19 @@ class EditGroupDialog:
                      fg_color="#333333", hover_color="#444444",
                      command=self.select_region).pack(side="left")
 
+        # Notes
+        notes_frame = ctk.CTkFrame(main, fg_color="#1a1a1a", corner_radius=10)
+        notes_frame.pack(fill="x", pady=10)
+
+        ctk.CTkLabel(notes_frame, text="Notlar:", font=ctk.CTkFont(size=12),
+                    text_color="#888888").pack(anchor="w", padx=15, pady=(10, 5))
+        self.notes_entry = ctk.CTkTextbox(notes_frame, width=420, height=60,
+                                          fg_color="#0d0d0d", corner_radius=6)
+        self.notes_entry.pack(padx=15, pady=(0, 10))
+        # Mevcut notları yükle
+        if self.group.get('notes'):
+            self.notes_entry.insert("1.0", self.group.get('notes', ''))
+
         # Buttons
         btn_frame = ctk.CTkFrame(main, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(20, 0))
@@ -1981,6 +2067,7 @@ class EditGroupDialog:
         self.group['spam_enabled'] = self.spam_enabled_var.get()
         self.group['spam_timing'] = {"pre_delay": pre, "hold_time": hold, "post_delay": post}
         self.group['search_region'] = self.search_region
+        self.group['notes'] = self.notes_entry.get("1.0", "end-1c").strip()
 
         self.manager.groups[self.index] = self.group
         self.manager.refresh_group_list()
@@ -3135,6 +3222,204 @@ class EditTemplateCapture:
 
 
 # ==================== MAIN ====================
+
+class ExportGroupDialog:
+    """Dialog for exporting a group as text"""
+    def __init__(self, parent, group):
+        self.group = group
+
+        self.top = ctk.CTkToplevel(parent)
+        self.top.title(f"Export: {group['name']}")
+        self.top.geometry("550x500")
+        self.top.transient(parent)
+        self.top.grab_set()
+        self.top.resizable(False, False)
+        self.top.after(10, self.center_window)
+
+        main = ctk.CTkFrame(self.top, fg_color="transparent")
+        main.pack(fill="both", expand=True, padx=20, pady=15)
+
+        ctk.CTkLabel(main, text="Export Grup", font=ctk.CTkFont(size=18, weight="bold"),
+                    text_color="#00d4ff").pack(pady=(0, 10))
+
+        ctk.CTkLabel(main, text="Bu kodu kopyalayıp paylaşabilirsiniz:",
+                    font=ctk.CTkFont(size=12), text_color="#888888").pack(anchor="w", pady=(0, 10))
+
+        # Export text area
+        self.export_text = ctk.CTkTextbox(main, width=500, height=350,
+                                          fg_color="#0d0d0d", corner_radius=8,
+                                          font=ctk.CTkFont(family="Consolas", size=11))
+        self.export_text.pack(fill="both", expand=True, pady=(0, 15))
+
+        # Generate export text
+        export_data = self.generate_export()
+        self.export_text.insert("1.0", export_data)
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(main, fg_color="transparent")
+        btn_frame.pack(fill="x")
+
+        ctk.CTkButton(btn_frame, text="Kopyala", width=100, height=35, fg_color="#00ff88",
+                     hover_color="#00cc6e", text_color="#000000",
+                     font=ctk.CTkFont(weight="bold"), command=self.copy_to_clipboard).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(btn_frame, text="Kapat", width=80, height=35, fg_color="#333333",
+                     hover_color="#444444", command=self.top.destroy).pack(side="left")
+
+    def center_window(self):
+        self.top.update_idletasks()
+        w, h = self.top.winfo_width(), self.top.winfo_height()
+        x = (self.top.winfo_screenwidth() // 2) - (w // 2)
+        y = (self.top.winfo_screenheight() // 2) - (h // 2)
+        self.top.geometry(f'{w}x{h}+{x}+{y}')
+
+    def generate_export(self):
+        """Generate export text from group data"""
+        import base64
+
+        # Template'lerin resim dosyalarını base64 olarak encode et
+        group_copy = self.group.copy()
+        group_copy['id'] = str(uuid.uuid4())  # Yeni ID ver
+
+        templates_with_images = []
+        for template in group_copy.get('templates', []):
+            t_copy = template.copy()
+            # Resmi base64'e çevir
+            img_path = IMAGES_FOLDER / template.get('file', '')
+            if img_path.exists():
+                try:
+                    with open(img_path, 'rb') as f:
+                        img_data = base64.b64encode(f.read()).decode('utf-8')
+                    t_copy['image_data'] = img_data
+                except:
+                    t_copy['image_data'] = ''
+            templates_with_images.append(t_copy)
+
+        group_copy['templates'] = templates_with_images
+
+        # JSON'a çevir ve base64 encode et
+        json_str = json.dumps(group_copy, ensure_ascii=False)
+        encoded = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
+
+        # Kolay paylaşım için başlık ve bitiş ekle
+        export_str = f"===KLAD_MACRO_EXPORT_START===\n{encoded}\n===KLAD_MACRO_EXPORT_END==="
+        return export_str
+
+    def copy_to_clipboard(self):
+        """Copy export text to clipboard"""
+        text = self.export_text.get("1.0", "end-1c")
+        self.top.clipboard_clear()
+        self.top.clipboard_append(text)
+        messagebox.showinfo("Başarılı", "Export kodu panoya kopyalandı!")
+
+
+class ImportGroupDialog:
+    """Dialog for importing a group from text"""
+    def __init__(self, parent, manager):
+        self.manager = manager
+
+        self.top = ctk.CTkToplevel(parent)
+        self.top.title("Import Grup")
+        self.top.geometry("550x500")
+        self.top.transient(parent)
+        self.top.grab_set()
+        self.top.resizable(False, False)
+        self.top.after(10, self.center_window)
+
+        main = ctk.CTkFrame(self.top, fg_color="transparent")
+        main.pack(fill="both", expand=True, padx=20, pady=15)
+
+        ctk.CTkLabel(main, text="Import Grup", font=ctk.CTkFont(size=18, weight="bold"),
+                    text_color="#00d4ff").pack(pady=(0, 10))
+
+        ctk.CTkLabel(main, text="Export kodunu buraya yapıştırın:",
+                    font=ctk.CTkFont(size=12), text_color="#888888").pack(anchor="w", pady=(0, 10))
+
+        # Import text area
+        self.import_text = ctk.CTkTextbox(main, width=500, height=350,
+                                          fg_color="#0d0d0d", corner_radius=8,
+                                          font=ctk.CTkFont(family="Consolas", size=11))
+        self.import_text.pack(fill="both", expand=True, pady=(0, 15))
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(main, fg_color="transparent")
+        btn_frame.pack(fill="x")
+
+        ctk.CTkButton(btn_frame, text="Import Et", width=100, height=35, fg_color="#00ff88",
+                     hover_color="#00cc6e", text_color="#000000",
+                     font=ctk.CTkFont(weight="bold"), command=self.do_import).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(btn_frame, text="Yapıştır", width=80, height=35, fg_color="#5a4a27",
+                     hover_color="#7a6a47", command=self.paste_from_clipboard).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(btn_frame, text="İptal", width=80, height=35, fg_color="#333333",
+                     hover_color="#444444", command=self.top.destroy).pack(side="left")
+
+    def center_window(self):
+        self.top.update_idletasks()
+        w, h = self.top.winfo_width(), self.top.winfo_height()
+        x = (self.top.winfo_screenwidth() // 2) - (w // 2)
+        y = (self.top.winfo_screenheight() // 2) - (h // 2)
+        self.top.geometry(f'{w}x{h}+{x}+{y}')
+
+    def paste_from_clipboard(self):
+        """Paste from clipboard"""
+        try:
+            text = self.top.clipboard_get()
+            self.import_text.delete("1.0", "end")
+            self.import_text.insert("1.0", text)
+        except:
+            messagebox.showwarning("Uyarı", "Panoda metin yok!")
+
+    def do_import(self):
+        """Import group from text"""
+        import base64
+
+        text = self.import_text.get("1.0", "end-1c").strip()
+
+        # Extract encoded data
+        if "===KLAD_MACRO_EXPORT_START===" not in text or "===KLAD_MACRO_EXPORT_END===" not in text:
+            messagebox.showerror("Hata", "Geçersiz import kodu!\nExport kodunun tamamını yapıştırdığınızdan emin olun.")
+            return
+
+        try:
+            # Extract base64 data
+            start = text.find("===KLAD_MACRO_EXPORT_START===") + len("===KLAD_MACRO_EXPORT_START===")
+            end = text.find("===KLAD_MACRO_EXPORT_END===")
+            encoded = text[start:end].strip()
+
+            # Decode
+            json_str = base64.b64decode(encoded.encode('utf-8')).decode('utf-8')
+            group = json.loads(json_str)
+
+            # Yeni ID ata
+            group['id'] = str(uuid.uuid4())
+
+            # Template resimlerini kaydet
+            for template in group.get('templates', []):
+                if 'image_data' in template and template['image_data']:
+                    try:
+                        img_data = base64.b64decode(template['image_data'])
+                        # Yeni dosya adı oluştur
+                        new_filename = f"imported_{uuid.uuid4().hex[:8]}.png"
+                        img_path = IMAGES_FOLDER / new_filename
+                        with open(img_path, 'wb') as f:
+                            f.write(img_data)
+                        template['file'] = new_filename
+                    except Exception as e:
+                        print(f"Image import error: {e}")
+
+                    # image_data'yı temizle (artık gerekli değil)
+                    del template['image_data']
+
+            # Grubu ekle
+            self.manager.groups.append(group)
+            self.manager.refresh_group_list()
+            self.manager.add_log(f"Grup import edildi: {group['name']}", "INFO")
+
+            messagebox.showinfo("Başarılı", f"'{group['name']}' grubu başarıyla import edildi!")
+            self.top.destroy()
+
+        except Exception as e:
+            messagebox.showerror("Hata", f"Import başarısız: {str(e)}")
+
 
 def main():
     # Required for Windows multiprocessing

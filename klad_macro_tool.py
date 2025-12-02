@@ -24,7 +24,7 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 # Paths
-CONFIG_FILE = Path(__file__).parent / "config_v3.json"
+CONFIG_FILE = Path(__file__).parent / "config.json"
 IMAGES_FOLDER = Path(__file__).parent / "images"
 
 # Ensure folders exist

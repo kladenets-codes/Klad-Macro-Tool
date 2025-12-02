@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Klad Macro Tool - Görsel Tetiklemeli Makro Aracı</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-card: #21262d;
+            --accent: #58a6ff;
+            --accent-hover: #79b8ff;
+            --success: #3fb950;
+            --warning: #d29922;
+            --danger: #f85149;
+            --text: #c9d1d9;
+            --text-secondary: #8b949e;
+            --border: #30363d;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text);
+            line-height: 1.6;
+        }
+
+        /* Hero Section */
+        .hero {
+            background: linear-gradient(135deg, #1a1f35 0%, #0d1117 50%, #0a1628 100%);
+            padding: 80px 20px;
+            text-align: center;
+            border-bottom: 1px solid var(--border);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: radial-gradient(circle at 50% 50%, rgba(88, 166, 255, 0.1) 0%, transparent 50%);
+        }
+
+        .hero-content {
+            position: relative;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            font-weight: 800;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, #58a6ff, #3fb950);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero .tagline {
+            font-size: 1.4rem;
+            color: var(--text-secondary);
+            margin-bottom: 30px;
+        }
+
+        .hero-badges {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-bottom: 40px;
+        }
+
+        .badge {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .badge.green { border-color: var(--success); color: var(--success); }
+        .badge.blue { border-color: var(--accent); color: var(--accent); }
+        .badge.yellow { border-color: var(--warning); color: var(--warning); }
+
+        .cta-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 14px 32px;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            border: none;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: #000;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(88, 166, 255, 0.3);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* Container */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* Section */
+        section {
+            padding: 80px 0;
+        }
+
+        section h2 {
+            font-size: 2.2rem;
+            margin-bottom: 20px;
+            color: var(--text);
+        }
+
+        section h2 span {
+            color: var(--accent);
+        }
+
+        .section-subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            margin-bottom: 50px;
+        }
+
+        /* Use Cases */
+        .use-cases {
+            background: var(--bg-secondary);
+        }
+
+        .use-case-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 30px;
+        }
+
+        .use-case-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 30px;
+            transition: all 0.3s ease;
+        }
+
+        .use-case-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .use-case-card .icon {
+            font-size: 2.5rem;
+            margin-bottom: 20px;
+        }
+
+        .use-case-card h3 {
+            font-size: 1.4rem;
+            margin-bottom: 15px;
+            color: var(--text);
+        }
+
+        .use-case-card p {
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+        }
+
+        .use-case-card ul {
+            list-style: none;
+        }
+
+        .use-case-card li {
+            padding: 8px 0;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .use-case-card li::before {
+            content: '✓';
+            color: var(--success);
+            font-weight: bold;
+        }
+
+        /* Features */
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 25px;
+        }
+
+        .feature-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 25px;
+            transition: all 0.3s ease;
+        }
+
+        .feature-card:hover {
+            border-color: var(--accent);
+        }
+
+        .feature-card .icon {
+            font-size: 2rem;
+            margin-bottom: 15px;
+        }
+
+        .feature-card h3 {
+            font-size: 1.1rem;
+            margin-bottom: 10px;
+        }
+
+        .feature-card p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        /* How It Works */
+        .how-it-works {
+            background: var(--bg-secondary);
+        }
+
+        .steps {
+            display: flex;
+            flex-direction: column;
+            gap: 30px;
+        }
+
+        .step {
+            display: flex;
+            gap: 30px;
+            align-items: flex-start;
+            background: var(--bg-card);
+            padding: 30px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+        }
+
+        .step-number {
+            background: linear-gradient(135deg, var(--accent), var(--success));
+            color: #000;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.4rem;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+
+        .step-content h3 {
+            font-size: 1.3rem;
+            margin-bottom: 10px;
+        }
+
+        .step-content p {
+            color: var(--text-secondary);
+        }
+
+        /* Code Block */
+        .code-section {
+            background: var(--bg-primary);
+        }
+
+        .code-block {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 30px 0;
+        }
+
+        .code-header {
+            background: var(--bg-card);
+            padding: 12px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .code-header span {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .code-header .copy-btn {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+
+        .code-header .copy-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .code-content {
+            padding: 20px;
+            overflow-x: auto;
+        }
+
+        .code-content pre {
+            margin: 0;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.95rem;
+            line-height: 1.8;
+        }
+
+        .code-content .comment { color: var(--text-secondary); }
+        .code-content .command { color: var(--success); }
+        .code-content .string { color: var(--warning); }
+
+        /* Macro Example */
+        .macro-example {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-top: 40px;
+        }
+
+        @media (max-width: 768px) {
+            .macro-example {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .macro-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 25px;
+        }
+
+        .macro-card h4 {
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .macro-card .tag {
+            background: var(--accent);
+            color: #000;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .macro-card .tag.advanced {
+            background: var(--warning);
+        }
+
+        /* Requirements */
+        .requirements {
+            background: var(--bg-secondary);
+        }
+
+        .req-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .req-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 15px 20px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .req-item .icon {
+            font-size: 1.5rem;
+        }
+
+        /* Footer */
+        footer {
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+            padding: 40px 20px;
+            text-align: center;
+        }
+
+        footer p {
+            color: var(--text-secondary);
+        }
+
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .animate {
+            animation: fadeIn 0.6s ease forwards;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+
+            .hero .tagline {
+                font-size: 1.1rem;
+            }
+
+            .step {
+                flex-direction: column;
+            }
+
+            section {
+                padding: 50px 0;
+            }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-content">
+            <h1>Klad Macro Tool</h1>
+            <p class="tagline">Ekran görüntüsü okuyarak tetiklenen gelişmiş makro aracı</p>
+
+            <div class="hero-badges">
+                <span class="badge green">⚡ 60+ FPS</span>
+                <span class="badge blue">🎮 Oyun Desteği</span>
+                <span class="badge yellow">🔧 Özelleştirilebilir</span>
+            </div>
+
+            <div class="cta-buttons">
+                <a href="https://github.com/kladenets-codes/Klad-Macro-Tool" class="btn btn-primary">Başlayın</a>
+                <a href="https://github.com/kladenets-codes/Klad-Macro-Tool" class="btn btn-secondary">GitHub</a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Use Cases -->
+    <section class="use-cases">
+        <div class="container">
+            <h2>Kullanım <span>Alanları</span></h2>
+            <p class="section-subtitle">Oyunlarda skill ikonları, buff/debuff göstergeleri veya herhangi bir görsel değişiklik algılandığında otomatik tetikleme</p>
+
+            <div class="use-case-grid">
+                <div class="use-case-card">
+                    <div class="icon">🐉</div>
+                    <h3>World of Warcraft</h3>
+                    <p>WeakAuras + GSE entegrasyonu ile gelişmiş rotation sistemi</p>
+                    <ul>
+                        <li>GSE (Gnome Sequencer Enhanced) makro tetikleme</li>
+                        <li>WeakAuras ile şartlar yazıp uyarlama (oto-interrupt)</li>
+                        <li>Proc-based rotation otomasyonu</li>
+                        <li>Cooldown tracking ve yönetimi</li>
+                        <li>Buff/Debuff izleme</li>
+                    </ul>
+                </div>
+
+                <div class="use-case-card">
+                    <div class="icon">⚔️</div>
+                    <h3>Knight Online</h3>
+                    <p>USKO/MYKO sunucularında profesyonel combo sistemi</p>
+                    <ul>
+                        <li>Assassin combo otomasyonu</li>
+                        <li>Minor skill zincirleri</li>
+                        <li>HP/MP potion yönetimi</li>
+                        <li>Warrior combo rotation</li>
+                    </ul>
+                </div>
+
+                <div class="use-case-card">
+                    <div class="icon">📱</div>
+                    <h3>Emulator & Diğer</h3>
+                    <p>Her türlü görsel tetiklemeli otomasyon</p>
+                    <ul>
+                        <li>Mobile game emulatorları</li>
+                        <li>Farming botları</li>
+                        <li>Auto-clicker sistemleri</li>
+                        <li>Test otomasyonu</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section class="features">
+        <div class="container">
+            <h2>Özellikler</h2>
+            <p class="section-subtitle">Güçlü ve esnek makro sistemi</p>
+
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="icon">📁</div>
+                    <h3>Grup Sistemi</h3>
+                    <p>Bağımsız toggle key, arama bölgesi ve template'ler ile çoklu grup yönetimi</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="icon">🎯</div>
+                    <h3>Template Matching</h3>
+                    <p>OpenCV tabanlı hassas görsel eşleştirme, ayarlanabilir threshold</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="icon">⌨️</div>
+                    <h3>Gelişmiş Makro</h3>
+                    <p>Logitech G Hub tarzı key_down, key_up, sleep komutları</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="icon">🎙️</div>
+                    <h3>Kayıt Modu</h3>
+                    <p>Klavye girişlerini otomatik olarak makroya kaydet</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="icon">⚡</div>
+                    <h3>Yüksek Performans</h3>
+                    <p>mss + grayscale optimizasyonu ile 60+ FPS arama hızı</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="icon">📊</div>
+                    <h3>FPS Overlay</h3>
+                    <p>Gerçek zamanlı arama hızı göstergesi</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="icon">🔄</div>
+                    <h3>Drag & Drop</h3>
+                    <p>Template ve makro sıralamasını sürükle-bırak ile değiştir</p>
+                </div>
+
+                <div class="feature-card">
+                    <div class="icon">🎨</div>
+                    <h3>Modern Arayüz</h3>
+                    <p>Karanlık tema, sezgisel kullanım</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- How It Works -->
+    <section class="how-it-works">
+        <div class="container">
+            <h2>Nasıl <span>Çalışır?</span></h2>
+            <p class="section-subtitle">5 adımda kurulum ve kullanım</p>
+
+            <div class="steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h3>Grup Oluştur</h3>
+                        <p>Yeni bir grup ekleyin ve toggle key (başlat/durdur tuşu) belirleyin. Her grup bağımsız çalışır.</p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h3>Arama Bölgesi Seç</h3>
+                        <p>Ekranda taranacak alanı belirleyin. Küçük bölge = daha yüksek FPS.</p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h3>Template Ekle</h3>
+                        <p>Ekrandan görsel yakalayın. Skill ikonu, buff göstergesi veya herhangi bir görsel olabilir.</p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-content">
+                        <h3>Tuş/Makro Ayarla</h3>
+                        <p>Template eşleştiğinde hangi tuşa basılacağını veya hangi makronun çalışacağını belirleyin.</p>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-number">5</div>
+                    <div class="step-content">
+                        <h3>Başlat</h3>
+                        <p>"BAŞLAT" butonuna tıklayın, ardından toggle key ile grubu aktifleştirin.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Installation -->
+    <section class="code-section" id="kurulum">
+        <div class="container">
+            <h2>Kurulum</h2>
+            <p class="section-subtitle">Hızlı başlangıç</p>
+
+            <div class="code-block">
+                <div class="code-header">
+                    <span>Terminal</span>
+                    <button class="copy-btn" onclick="copyCode(this)">Kopyala</button>
+                </div>
+                <div class="code-content">
+<pre><span class="comment"># Gereksinimleri yükle</span>
+<span class="command">pip install</span> -r requirements.txt
+
+<span class="comment"># Uygulamayı çalıştır</span>
+<span class="command">python</span> klad_macro_tool.py</pre>
+                </div>
+            </div>
+
+            <h3 style="margin-top: 50px; margin-bottom: 20px;">Makro Örnekleri</h3>
+
+            <div class="macro-example">
+                <div class="macro-card">
+                    <h4>Basit Mod <span class="tag">Kolay</span></h4>
+                    <p style="color: var(--text-secondary); margin-bottom: 15px;">Tek tuş kombinasyonu</p>
+                    <div class="code-block" style="margin: 0;">
+                        <div class="code-content">
+<pre><span class="string">"key_combo"</span>: <span class="string">"alt+1"</span>
+<span class="string">"key_combo"</span>: <span class="string">"shift+q"</span>
+<span class="string">"key_combo"</span>: <span class="string">"ctrl+alt+f"</span></pre>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="macro-card">
+                    <h4>Gelişmiş Makro <span class="tag advanced">Pro</span></h4>
+                    <p style="color: var(--text-secondary); margin-bottom: 15px;">Logitech G Hub tarzı</p>
+                    <div class="code-block" style="margin: 0;">
+                        <div class="code-content">
+<pre>[
+  {<span class="string">"action"</span>: <span class="string">"key_down"</span>, <span class="string">"key"</span>: <span class="string">"alt"</span>},
+  {<span class="string">"action"</span>: <span class="string">"sleep"</span>, <span class="string">"ms"</span>: 50},
+  {<span class="string">"action"</span>: <span class="string">"key_press"</span>, <span class="string">"key"</span>: <span class="string">"1"</span>},
+  {<span class="string">"action"</span>: <span class="string">"key_up"</span>, <span class="string">"key"</span>: <span class="string">"alt"</span>}
+]</pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Requirements -->
+    <section class="requirements">
+        <div class="container">
+            <h2>Gereksinimler</h2>
+            <p class="section-subtitle">Python 3.8+ ve aşağıdaki kütüphaneler</p>
+
+            <div class="req-grid">
+                <div class="req-item">
+                    <span class="icon">📦</span>
+                    <span>opencv-python</span>
+                </div>
+                <div class="req-item">
+                    <span class="icon">📦</span>
+                    <span>numpy</span>
+                </div>
+                <div class="req-item">
+                    <span class="icon">📦</span>
+                    <span>mss</span>
+                </div>
+                <div class="req-item">
+                    <span class="icon">📦</span>
+                    <span>keyboard</span>
+                </div>
+                <div class="req-item">
+                    <span class="icon">📦</span>
+                    <span>Pillow</span>
+                </div>
+                <div class="req-item">
+                    <span class="icon">📦</span>
+                    <span>customtkinter</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="container">
+            <p>Klad Macro Tool &copy; 2024 | <a href="https://github.com/kladenets-codes/Klad-Macro-Tool">GitHub</a></p>
+            <p style="margin-top: 10px; font-size: 0.9rem;">Windows'ta yönetici hakları gerektirir (keyboard hooks)</p>
+        </div>
+    </footer>
+
+    <script>
+        function copyCode(btn) {
+            const codeBlock = btn.closest('.code-block');
+            const code = codeBlock.querySelector('pre').textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                btn.textContent = 'Kopyalandı!';
+                setTimeout(() => btn.textContent = 'Kopyala', 2000);
+            });
+        }
+
+        // Smooth scroll
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function(e) {
+                e.preventDefault();
+                document.querySelector(this.getAttribute('href')).scrollIntoView({
+                    behavior: 'smooth'
+                });
+            });
+        });
+
+        // Animate on scroll
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('animate');
+                }
+            });
+        }, { threshold: 0.1 });
+
+        document.querySelectorAll('.feature-card, .use-case-card, .step').forEach(el => {
+            observer.observe(el);
+        });
+    </script>
+</body>
+</html>

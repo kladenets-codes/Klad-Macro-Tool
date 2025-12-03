@@ -43,6 +43,8 @@ Klad Macro Tool, oyunlarda skill ikonları, buff/debuff göstergeleri veya herha
 - **Drag & Drop** - Template ve makro sıralamasını sürükle-bırak ile değiştir
 - **Modern Arayüz** - Karanlık tema, sezgisel kullanım
 - **Group Import/Export** - Grupları metin olarak paylaş ve içe aktar
+- **Hazır Presetler** - Oyunlara özel hazır grup şablonları
+- **Test Modu** - Template'leri çalıştırmadan önce test et
 
 ## Kurulum
 

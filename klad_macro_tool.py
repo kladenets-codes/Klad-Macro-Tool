@@ -358,6 +358,12 @@ class ConfigManager:
         self.fps_labels = {}
         self.fps_label_frame = None
 
+        # Test mode
+        self.test_mode_active = False
+        self.test_overlay = None
+        self.test_labels = {}  # group_id -> {template_name -> label}
+        self.test_update_job = None
+
         # Load existing config
         self.load_config()
 
@@ -820,6 +826,20 @@ Kullanım:
             command=self.toggle_all_bots
         )
         self.start_stop_btn.pack(side="left", padx=(0, 10))
+
+        self.test_mode_btn = ctk.CTkButton(
+            left_controls,
+            text="🧪  Test",
+            width=100,
+            height=45,
+            corner_radius=10,
+            fg_color=self.colors["warning"],
+            hover_color="#e6a800",
+            text_color="#000000",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self.toggle_test_mode
+        )
+        self.test_mode_btn.pack(side="left", padx=(0, 10))
 
         ctk.CTkButton(
             left_controls,
@@ -1377,6 +1397,266 @@ Kullanım:
             if group.get('toggle_key', '').lower() == key.lower():
                 return group['name']
         return None
+
+    # ==================== TEST MODE ====================
+
+    def toggle_test_mode(self):
+        """Toggle test mode on/off"""
+        if self.test_mode_active:
+            self.stop_test_mode()
+        else:
+            self.start_test_mode()
+
+    def start_test_mode(self):
+        """Start test mode - shows template matching status in overlay"""
+        if self.bot_active:
+            messagebox.showwarning("Uyarı", "Bot çalışırken test modu açılamaz!")
+            return
+
+        # Aktif grup kontrolü
+        enabled_groups = [g for g in self.groups if g.get('enabled', True)]
+        if not enabled_groups:
+            messagebox.showwarning("Uyarı", "Test için en az bir aktif grup olmalı!")
+            return
+
+        # Template'i olan grup kontrolü
+        groups_with_templates = [g for g in enabled_groups if g.get('templates')]
+        if not groups_with_templates:
+            messagebox.showwarning("Uyarı", "Test için en az bir template olmalı!")
+            return
+
+        self.test_mode_active = True
+        self.test_mode_btn.configure(text="⏹  Durdur", fg_color=self.colors["danger"], hover_color="#cc3344")
+
+        # Overlay penceresi oluştur
+        self.create_test_overlay()
+
+        # Test döngüsünü başlat
+        self.run_test_cycle()
+
+    def stop_test_mode(self):
+        """Stop test mode"""
+        self.test_mode_active = False
+        self.test_mode_btn.configure(text="🧪  Test", fg_color=self.colors["warning"], hover_color="#e6a800")
+
+        # Scheduled job'u iptal et
+        if self.test_update_job:
+            self.root.after_cancel(self.test_update_job)
+            self.test_update_job = None
+
+        # Overlay'i kapat
+        if self.test_overlay:
+            try:
+                self.test_overlay.destroy()
+            except:
+                pass
+            self.test_overlay = None
+
+        self.test_labels.clear()
+
+    def create_test_overlay(self):
+        """Create test mode overlay window - FPS overlay style, click-through"""
+        self.test_overlay = tk.Toplevel(self.root)
+        self.test_overlay.title("")
+        self.test_overlay.overrideredirect(True)  # Çerçevesiz
+        self.test_overlay.attributes('-topmost', True)  # Her zaman üstte
+        self.test_overlay.attributes('-alpha', 0.85)  # Hafif şeffaf
+        self.test_overlay.configure(bg='#1a1a1a')
+
+        # Ekranın sağ üstüne konumlandır (FPS overlay'ın altına)
+        screen_width = self.root.winfo_screenwidth()
+        self.test_overlay.geometry(f"+{screen_width - 280}+50")
+
+        # Windows'ta click-through yapmak için
+        try:
+            import ctypes
+            hwnd = ctypes.windll.user32.GetParent(self.test_overlay.winfo_id())
+            # WS_EX_LAYERED | WS_EX_TRANSPARENT
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, -20)  # GWL_EXSTYLE
+            ctypes.windll.user32.SetWindowLongW(hwnd, -20, style | 0x80000 | 0x20)  # WS_EX_LAYERED | WS_EX_TRANSPARENT
+        except:
+            pass
+
+        # Ana container
+        main_frame = tk.Frame(self.test_overlay, bg='#1a1a1a')
+        main_frame.pack(padx=10, pady=8)
+
+        # Header
+        header_frame = tk.Frame(main_frame, bg='#1a1a1a')
+        header_frame.pack(fill="x", pady=(0, 8))
+
+        tk.Label(
+            header_frame,
+            text="🧪 TEST MODE",
+            font=("Segoe UI", 11, "bold"),
+            fg="#ffa502",
+            bg='#1a1a1a'
+        ).pack(side="left")
+
+        # Aktif grupları ve template'lerini listele
+        enabled_groups = [g for g in self.groups if g.get('enabled', True)]
+
+        for group in enabled_groups:
+            if not group.get('templates'):
+                continue
+
+            group_id = group['id']
+            self.test_labels[group_id] = {}
+
+            # Grup başlığı
+            group_frame = tk.Frame(main_frame, bg='#242424', padx=8, pady=6)
+            group_frame.pack(fill="x", pady=(0, 6))
+
+            tk.Label(
+                group_frame,
+                text=f"📁 {group['name']}",
+                font=("Segoe UI", 10, "bold"),
+                fg="#00d4ff",
+                bg='#242424'
+            ).pack(anchor="w")
+
+            # Template'leri listele
+            for template in group.get('templates', []):
+                if not template.get('enabled', True):
+                    continue
+
+                template_name = template['name']
+                template_color = template.get('color', '#888888')
+                threshold = template.get('threshold', 0.9)
+
+                # Template satırı
+                row = tk.Frame(group_frame, bg='#242424')
+                row.pack(fill="x", pady=2)
+
+                # Status indicator (canvas ile yuvarlak)
+                canvas = tk.Canvas(row, width=12, height=12, bg='#242424', highlightthickness=0)
+                canvas.pack(side="left", padx=(0, 6))
+                indicator = canvas.create_oval(1, 1, 11, 11, fill="#ff4757", outline="")
+
+                # Template adı
+                tk.Label(
+                    row,
+                    text=template_name,
+                    font=("Segoe UI", 9),
+                    fg=template_color,
+                    bg='#242424'
+                ).pack(side="left")
+
+                # Threshold
+                tk.Label(
+                    row,
+                    text=f"({int(threshold * 100)}%)",
+                    font=("Segoe UI", 8),
+                    fg="#666666",
+                    bg='#242424'
+                ).pack(side="right", padx=(4, 0))
+
+                # Match değeri
+                match_label = tk.Label(
+                    row,
+                    text="0%",
+                    font=("Segoe UI", 9),
+                    fg="#888888",
+                    bg='#242424',
+                    width=4,
+                    anchor="e"
+                )
+                match_label.pack(side="right")
+
+                self.test_labels[group_id][template_name] = {
+                    'canvas': canvas,
+                    'indicator': indicator,
+                    'match': match_label,
+                    'threshold': threshold
+                }
+
+    def run_test_cycle(self):
+        """Run one test cycle and schedule next"""
+        if not self.test_mode_active:
+            return
+
+        try:
+            import mss
+            with mss.mss() as sct:
+                enabled_groups = [g for g in self.groups if g.get('enabled', True)]
+
+                for group in enabled_groups:
+                    if not group.get('templates'):
+                        continue
+
+                    group_id = group['id']
+                    if group_id not in self.test_labels:
+                        continue
+
+                    search_region = group.get('search_region', [0, 0, 100, 100])
+
+                    # Ekran görüntüsü al
+                    try:
+                        monitor = {
+                            "left": search_region[0],
+                            "top": search_region[1],
+                            "width": search_region[2] - search_region[0],
+                            "height": search_region[3] - search_region[1]
+                        }
+                        sct_img = sct.grab(monitor)
+                        screenshot = np.array(sct_img)[:, :, :3]
+                        screenshot_gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+                    except Exception as e:
+                        continue
+
+                    # Her template için eşleşme kontrolü
+                    for template in group.get('templates', []):
+                        if not template.get('enabled', True):
+                            continue
+
+                        template_name = template['name']
+                        if template_name not in self.test_labels[group_id]:
+                            continue
+
+                        threshold = template.get('threshold', 0.9)
+                        template_file = template.get('file', '')
+
+                        # Template yolunu bul (bot worker ile AYNI mantık: IMAGES_FOLDER / file)
+                        template_path = IMAGES_FOLDER / template_file
+
+                        match_val = 0.0
+                        matched = False
+
+                        if template_path.exists():
+                            try:
+                                template_img = cv2.imread(str(template_path), cv2.IMREAD_GRAYSCALE)
+                                if template_img is not None:
+                                    # Template screenshot'tan büyükse atla
+                                    if template_img.shape[0] > screenshot_gray.shape[0] or template_img.shape[1] > screenshot_gray.shape[1]:
+                                        logger.warning(f"Template '{template_name}' arama bölgesinden büyük!")
+                                        continue
+
+                                    result = cv2.matchTemplate(screenshot_gray, template_img, cv2.TM_CCOEFF_NORMED)
+                                    _, max_val, _, _ = cv2.minMaxLoc(result)
+                                    match_val = max_val
+                                    matched = max_val >= threshold
+                            except Exception as e:
+                                logger.error(f"Template match error for '{template_name}': {e}")
+                        else:
+                            logger.warning(f"Template dosyası bulunamadı: {template_path}")
+
+                        # UI güncelle
+                        labels = self.test_labels[group_id][template_name]
+                        match_percent = int(match_val * 100)
+
+                        if matched:
+                            labels['canvas'].itemconfig(labels['indicator'], fill="#00ff88")
+                            labels['match'].configure(text=f"{match_percent}%", fg="#00ff88")
+                        else:
+                            labels['canvas'].itemconfig(labels['indicator'], fill="#ff4757")
+                            labels['match'].configure(text=f"{match_percent}%", fg="#888888")
+
+        except Exception as e:
+            logger.error(f"Test cycle error: {e}")
+
+        # Sonraki cycle'ı zamanla (100ms = 10 FPS test)
+        if self.test_mode_active:
+            self.test_update_job = self.root.after(100, self.run_test_cycle)
 
     # ==================== BOT CONTROL ====================
 

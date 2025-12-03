@@ -336,6 +336,7 @@ class ConfigManager:
             "debug_enabled": False,
             "fps_overlay_enabled": True
         }
+        self.presets = []
 
         # Process management
         self.processes = {}  # group_id -> Process
@@ -399,12 +400,25 @@ class ConfigManager:
             segmented_button_selected_hover_color=self.colors["accent_hover"],
             segmented_button_unselected_color=self.colors["bg_secondary"],
             segmented_button_unselected_hover_color=self.colors["border"],
+            text_color="#000000",
+            text_color_disabled=self.colors["text_secondary"],
             corner_radius=15
         )
         self.tabview.pack(fill="both", expand=True, padx=15, pady=(15, 10))
 
         self.tabview.add("📁 Groups")
         self.tabview.add("⚙️ Genel Ayarlar")
+
+        # Tab text colors: unselected=white, selected=black
+        self.tabview._segmented_button.configure(
+            text_color=("#ffffff", "#ffffff"),
+            selected_color=self.colors["accent"],
+            selected_hover_color=self.colors["accent_hover"],
+            unselected_color=self.colors["bg_secondary"],
+            unselected_hover_color=self.colors["border"]
+        )
+        self.tabview.configure(command=self.on_tab_change)
+        self.update_tab_text_colors()
 
         # ==================== GROUPS TAB ====================
         self.build_groups_tab()
@@ -417,6 +431,19 @@ class ConfigManager:
 
         # Handle window close
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def on_tab_change(self):
+        """Called when tab is changed"""
+        self.update_tab_text_colors()
+
+    def update_tab_text_colors(self):
+        """Update tab text colors: selected=black, unselected=white"""
+        current_tab = self.tabview.get()
+        for name, button in self.tabview._segmented_button._buttons_dict.items():
+            if name == current_tab:
+                button._text_label.configure(fg="#000000")
+            else:
+                button._text_label.configure(fg="#ffffff")
 
     def build_groups_tab(self):
         """Build the groups tab"""
@@ -454,40 +481,38 @@ class ConfigManager:
 
         ctk.CTkButton(
             group_btn_frame,
-            text="+ Yeni",
+            text="+  Yeni",
             width=75,
             height=32,
             corner_radius=8,
             fg_color=self.colors["accent"],
             hover_color=self.colors["accent_hover"],
+            text_color="#000000",
             font=ctk.CTkFont(size=12, weight="bold"),
-            anchor="center",
             command=self.add_group
         ).pack(side="left", padx=(0, 6))
 
         ctk.CTkButton(
             group_btn_frame,
-            text="✏️",
+            text=" ✏️",
             width=40,
             height=32,
             corner_radius=8,
             fg_color=self.colors["bg_dark"],
             hover_color=self.colors["border"],
-            font=ctk.CTkFont(size=14),
-            anchor="center",
+            font=ctk.CTkFont(size=13),
             command=self.edit_group
         ).pack(side="left", padx=(0, 6))
 
         ctk.CTkButton(
             group_btn_frame,
-            text="🗑️",
+            text=" 🗑",
             width=40,
             height=32,
             corner_radius=8,
             fg_color=self.colors["danger"],
             hover_color="#cc3a47",
-            font=ctk.CTkFont(size=14),
-            anchor="center",
+            font=ctk.CTkFont(size=13),
             command=self.delete_group
         ).pack(side="left")
 
@@ -519,6 +544,19 @@ class ConfigManager:
             font=ctk.CTkFont(size=11),
             anchor="center",
             command=self.import_group
+        ).pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(
+            ie_btn_frame,
+            text="Presets",
+            width=80,
+            height=28,
+            corner_radius=6,
+            fg_color="#4a3a6a",
+            hover_color="#6a5a8a",
+            font=ctk.CTkFont(size=11),
+            anchor="center",
+            command=self.open_presets
         ).pack(side="left")
 
         # Right panel - Group details
@@ -591,40 +629,37 @@ class ConfigManager:
 
         ctk.CTkButton(
             template_btn_frame,
-            text="✏️",
-            width=35,
-            height=28,
-            corner_radius=6,
+            text=" ✏️",
+            width=40,
+            height=32,
+            corner_radius=8,
             fg_color=self.colors["bg_dark"],
             hover_color=self.colors["border"],
-            font=ctk.CTkFont(size=14),
-            anchor="center",
+            font=ctk.CTkFont(size=13),
             command=self.edit_template
-        ).pack(side="left", padx=(0, 5))
+        ).pack(side="left", padx=(0, 6))
 
         ctk.CTkButton(
             template_btn_frame,
-            text="🗑️",
-            width=35,
-            height=28,
-            corner_radius=6,
+            text=" 🗑",
+            width=40,
+            height=32,
+            corner_radius=8,
             fg_color=self.colors["danger"],
             hover_color="#cc3a47",
-            font=ctk.CTkFont(size=14),
-            anchor="center",
+            font=ctk.CTkFont(size=13),
             command=self.delete_template
-        ).pack(side="left", padx=(0, 5))
+        ).pack(side="left", padx=(0, 6))
 
         ctk.CTkButton(
             template_btn_frame,
-            text="📋",
-            width=35,
-            height=28,
-            corner_radius=6,
+            text=" 📋",
+            width=40,
+            height=32,
+            corner_radius=8,
             fg_color="#5a4a27",
             hover_color="#7a6a47",
-            font=ctk.CTkFont(size=14),
-            anchor="center",
+            font=ctk.CTkFont(size=13),
             command=self.duplicate_template
         ).pack(side="left")
 
@@ -780,6 +815,7 @@ Kullanım:
             corner_radius=10,
             fg_color=self.colors["success"],
             hover_color="#00cc6e",
+            text_color="#000000",
             font=ctk.CTkFont(size=14, weight="bold"),
             command=self.toggle_all_bots
         )
@@ -787,12 +823,13 @@ Kullanım:
 
         ctk.CTkButton(
             left_controls,
-            text="💾 Kaydet",
+            text="💾  Kaydet",
             width=100,
             height=45,
             corner_radius=10,
             fg_color=self.colors["accent"],
             hover_color=self.colors["accent_hover"],
+            text_color="#000000",
             font=ctk.CTkFont(size=13, weight="bold"),
             command=self.save_config
         ).pack(side="left", padx=(0, 10))
@@ -837,6 +874,27 @@ Kullanım:
                 if key:
                     key_counts[key] = key_counts.get(key, 0) + 1
         return {k for k, v in key_counts.items() if v > 1}
+
+    def check_missing_template_images(self):
+        """Aktif gruplardaki eksik template görsellerini kontrol et"""
+        missing = {}
+        for group in self.groups:
+            if not group.get('enabled', True):
+                continue
+            group_missing = []
+            for template in group.get('templates', []):
+                if not template.get('enabled', True):
+                    continue
+                img_file = template.get('file', '')
+                if not img_file:
+                    group_missing.append(f"{template.get('name', 'Unnamed')} (dosya yok)")
+                else:
+                    img_path = IMAGES_FOLDER / img_file
+                    if not img_path.exists():
+                        group_missing.append(f"{template.get('name', 'Unnamed')} ({img_file})")
+            if group_missing:
+                missing[group.get('name', 'Unnamed Group')] = group_missing
+        return missing
 
     def create_group_card(self, index, group):
         """Create a group card"""
@@ -1228,6 +1286,10 @@ Kullanım:
         """Import group from text"""
         ImportGroupDialog(self.root, self)
 
+    def open_presets(self):
+        """Open presets dialog"""
+        PresetDialog(self.root, self)
+
     def add_template(self):
         """Add template to selected group"""
         if self.selected_group_index is None:
@@ -1344,7 +1406,19 @@ Kullanım:
             messagebox.showerror("Hata", f"Çakışan toggle key'ler var: {keys_str}\n\nAynı tuşu kullanan gruplardan birini pasif yapın veya tuşlarını değiştirin.")
             return
 
-        self.save_config()
+        # Eksik görsel kontrolü
+        missing_images = self.check_missing_template_images()
+        if missing_images:
+            error_msg = "Eksik template görselleri var:\n\n"
+            for group_name, templates in missing_images.items():
+                error_msg += f"• {group_name}:\n"
+                for t in templates:
+                    error_msg += f"   - {t}\n"
+            error_msg += "\nLütfen eksik görselleri düzeltin veya template'leri silin."
+            messagebox.showerror("Hata", error_msg)
+            return
+
+        self.save_config(silent=True)
 
         # Create status queue
         self.status_queue = multiprocessing.Queue()
@@ -1431,7 +1505,8 @@ Kullanım:
             self.start_stop_btn.configure(
                 text="⏹  DURDUR",
                 fg_color=self.colors["danger"],
-                hover_color="#cc3a47"
+                hover_color="#cc3a47",
+                text_color="#ffffff"
             )
             self.status_indicator.configure(fg_color=self.colors["warning"])
             self.status_label.configure(text="Hazır", text_color=self.colors["warning"])
@@ -1439,7 +1514,8 @@ Kullanım:
             self.start_stop_btn.configure(
                 text="▶  BAŞLAT",
                 fg_color=self.colors["success"],
-                hover_color="#00cc6e"
+                hover_color="#00cc6e",
+                text_color="#000000"
             )
             self.status_indicator.configure(fg_color=self.colors["danger"])
             self.status_label.configure(text="Durdu", text_color=self.colors["danger"])
@@ -1659,6 +1735,7 @@ Kullanım:
                 data = json.load(f)
                 self.groups = data.get("groups", [])
                 self.global_settings = data.get("global_settings", {})
+                self.presets = data.get("presets", [])
         except Exception as e:
             messagebox.showerror("Hata", f"Config yüklenemedi: {e}")
 
@@ -1707,7 +1784,7 @@ Kullanım:
             self.add_log("FPS overlay kapatıldı.", "INFO")
             self.destroy_fps_overlay()
 
-    def save_config(self):
+    def save_config(self, silent=False):
         """Save config to JSON"""
         try:
             self.global_settings["debug_enabled"] = self.debug_var.get()
@@ -1715,13 +1792,15 @@ Kullanım:
 
             data = {
                 "groups": self.groups,
-                "global_settings": self.global_settings
+                "global_settings": self.global_settings,
+                "presets": getattr(self, 'presets', [])
             }
 
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
 
-            messagebox.showinfo("Başarılı", "Config kaydedildi!")
+            if not silent:
+                messagebox.showinfo("Başarılı", "Config kaydedildi!")
         except Exception as e:
             messagebox.showerror("Hata", f"Config kaydedilemedi: {e}")
 
@@ -3416,6 +3495,262 @@ class ImportGroupDialog:
 
             messagebox.showinfo("Başarılı", f"'{group['name']}' grubu başarıyla import edildi!")
             self.top.destroy()
+
+        except Exception as e:
+            messagebox.showerror("Hata", f"Import başarısız: {str(e)}")
+
+
+class PresetDialog:
+    """Dialog for managing and importing presets"""
+    def __init__(self, parent, manager):
+        self.manager = manager
+        self.selected_preset_index = None
+
+        self.top = ctk.CTkToplevel(parent)
+        self.top.title("Presets")
+        self.top.geometry("700x550")
+        self.top.transient(parent)
+        self.top.grab_set()
+        self.top.resizable(False, False)
+        self.top.after(10, self.center_window)
+
+        main = ctk.CTkFrame(self.top, fg_color="transparent")
+        main.pack(fill="both", expand=True, padx=20, pady=15)
+
+        # Header
+        header = ctk.CTkFrame(main, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 15))
+
+        ctk.CTkLabel(header, text="Presets", font=ctk.CTkFont(size=20, weight="bold"),
+                    text_color="#00d4ff").pack(side="left")
+
+        # Add preset button
+        ctk.CTkButton(header, text="+ Yeni Preset", width=120, height=32,
+                     fg_color="#4a3a6a", hover_color="#6a5a8a",
+                     font=ctk.CTkFont(weight="bold"),
+                     command=self.add_preset).pack(side="right")
+
+        # Content area - split view
+        content = ctk.CTkFrame(main, fg_color="transparent")
+        content.pack(fill="both", expand=True)
+
+        # Left panel - Preset list
+        left_panel = ctk.CTkFrame(content, fg_color="#1a1a1a", corner_radius=10, width=220)
+        left_panel.pack(side="left", fill="y", padx=(0, 10))
+        left_panel.pack_propagate(False)
+
+        ctk.CTkLabel(left_panel, text="Preset Listesi", font=ctk.CTkFont(size=12, weight="bold"),
+                    text_color="#888888").pack(pady=(15, 10), padx=15, anchor="w")
+
+        # Preset listbox frame
+        list_frame = ctk.CTkFrame(left_panel, fg_color="transparent")
+        list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        self.preset_listbox = ctk.CTkScrollableFrame(list_frame, fg_color="#0d0d0d", corner_radius=8)
+        self.preset_listbox.pack(fill="both", expand=True)
+
+        # Right panel - Preset details
+        right_panel = ctk.CTkFrame(content, fg_color="#1a1a1a", corner_radius=10)
+        right_panel.pack(side="right", fill="both", expand=True)
+
+        self.details_frame = ctk.CTkFrame(right_panel, fg_color="transparent")
+        self.details_frame.pack(fill="both", expand=True, padx=20, pady=15)
+
+        # Placeholder
+        self.placeholder_label = ctk.CTkLabel(
+            self.details_frame,
+            text="Bir preset seçin veya yeni ekleyin",
+            font=ctk.CTkFont(size=14),
+            text_color="#666666"
+        )
+        self.placeholder_label.pack(expand=True)
+
+        # Detail widgets (hidden initially)
+        self.detail_widgets_frame = ctk.CTkFrame(self.details_frame, fg_color="transparent")
+
+        # Preset name
+        ctk.CTkLabel(self.detail_widgets_frame, text="Preset Adı:", font=ctk.CTkFont(size=12),
+                    text_color="#888888").pack(anchor="w")
+        self.name_entry = ctk.CTkEntry(self.detail_widgets_frame, height=35, fg_color="#0d0d0d",
+                                       font=ctk.CTkFont(size=13))
+        self.name_entry.pack(fill="x", pady=(5, 15))
+
+        # Info/description
+        ctk.CTkLabel(self.detail_widgets_frame, text="Açıklama:", font=ctk.CTkFont(size=12),
+                    text_color="#888888").pack(anchor="w")
+        self.info_text = ctk.CTkTextbox(self.detail_widgets_frame, height=60, fg_color="#0d0d0d",
+                                        font=ctk.CTkFont(size=12))
+        self.info_text.pack(fill="x", pady=(5, 15))
+
+        # Import code
+        ctk.CTkLabel(self.detail_widgets_frame, text="Import Kodu:", font=ctk.CTkFont(size=12),
+                    text_color="#888888").pack(anchor="w")
+        self.code_text = ctk.CTkTextbox(self.detail_widgets_frame, height=180, fg_color="#0d0d0d",
+                                        font=ctk.CTkFont(family="Consolas", size=11))
+        self.code_text.pack(fill="both", expand=True, pady=(5, 15))
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(self.detail_widgets_frame, fg_color="transparent")
+        btn_frame.pack(fill="x")
+
+        ctk.CTkButton(btn_frame, text="Import Et", width=100, height=35,
+                     fg_color="#00ff88", hover_color="#00cc6e", text_color="#000000",
+                     font=ctk.CTkFont(weight="bold"),
+                     command=self.import_preset).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(btn_frame, text="Kaydet", width=80, height=35,
+                     fg_color="#4a3a6a", hover_color="#6a5a8a",
+                     command=self.save_preset).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(btn_frame, text="Sil", width=60, height=35,
+                     fg_color="#8B0000", hover_color="#a52a2a",
+                     command=self.delete_preset).pack(side="left")
+
+        # Bottom close button
+        ctk.CTkButton(main, text="Kapat", width=100, height=35,
+                     fg_color="#333333", hover_color="#444444",
+                     command=self.top.destroy).pack(pady=(15, 0))
+
+        self.refresh_preset_list()
+
+    def center_window(self):
+        self.top.update_idletasks()
+        w, h = self.top.winfo_width(), self.top.winfo_height()
+        x = (self.top.winfo_screenwidth() // 2) - (w // 2)
+        y = (self.top.winfo_screenheight() // 2) - (h // 2)
+        self.top.geometry(f'{w}x{h}+{x}+{y}')
+
+    def refresh_preset_list(self):
+        """Refresh the preset list"""
+        for widget in self.preset_listbox.winfo_children():
+            widget.destroy()
+
+        for i, preset in enumerate(self.manager.presets):
+            btn = ctk.CTkButton(
+                self.preset_listbox,
+                text=preset.get('name', 'Unnamed'),
+                height=36,
+                corner_radius=6,
+                fg_color="#2a2a2a" if i != self.selected_preset_index else "#4a3a6a",
+                hover_color="#3a3a3a",
+                anchor="w",
+                font=ctk.CTkFont(size=12),
+                command=lambda idx=i: self.select_preset(idx)
+            )
+            btn.pack(fill="x", pady=2)
+
+    def select_preset(self, index):
+        """Select a preset and show details"""
+        self.selected_preset_index = index
+        self.refresh_preset_list()
+
+        # Show detail widgets
+        self.placeholder_label.pack_forget()
+        self.detail_widgets_frame.pack(fill="both", expand=True)
+
+        # Load preset data
+        preset = self.manager.presets[index]
+        self.name_entry.delete(0, "end")
+        self.name_entry.insert(0, preset.get('name', ''))
+
+        self.info_text.delete("1.0", "end")
+        self.info_text.insert("1.0", preset.get('info', ''))
+
+        self.code_text.delete("1.0", "end")
+        self.code_text.insert("1.0", preset.get('import_code', ''))
+
+    def add_preset(self):
+        """Add a new preset"""
+        new_preset = {
+            "name": f"Yeni Preset {len(self.manager.presets) + 1}",
+            "info": "",
+            "import_code": ""
+        }
+        self.manager.presets.append(new_preset)
+        self.manager.save_config(silent=True)
+        self.refresh_preset_list()
+        self.select_preset(len(self.manager.presets) - 1)
+
+    def save_preset(self):
+        """Save current preset"""
+        if self.selected_preset_index is None:
+            return
+
+        preset = self.manager.presets[self.selected_preset_index]
+        preset['name'] = self.name_entry.get().strip() or "Unnamed"
+        preset['info'] = self.info_text.get("1.0", "end-1c").strip()
+        preset['import_code'] = self.code_text.get("1.0", "end-1c").strip()
+
+        self.manager.save_config(silent=True)
+        self.refresh_preset_list()
+        messagebox.showinfo("Başarılı", "Preset kaydedildi!")
+
+    def delete_preset(self):
+        """Delete selected preset"""
+        if self.selected_preset_index is None:
+            return
+
+        preset = self.manager.presets[self.selected_preset_index]
+        if messagebox.askyesno("Onayla", f"'{preset.get('name', 'Preset')}' silinsin mi?"):
+            self.manager.presets.pop(self.selected_preset_index)
+            self.selected_preset_index = None
+            self.manager.save_config(silent=True)
+            self.refresh_preset_list()
+
+            # Hide details
+            self.detail_widgets_frame.pack_forget()
+            self.placeholder_label.pack(expand=True)
+
+    def import_preset(self):
+        """Import the preset's group"""
+        if self.selected_preset_index is None:
+            return
+
+        preset = self.manager.presets[self.selected_preset_index]
+        import_code = preset.get('import_code', '').strip()
+
+        if not import_code:
+            messagebox.showwarning("Uyarı", "Bu preset'in import kodu boş!")
+            return
+
+        # Import işlemini yap (ImportGroupDialog'daki mantığı kullan)
+        import base64
+
+        if "===KLAD_MACRO_EXPORT_START===" not in import_code or "===KLAD_MACRO_EXPORT_END===" not in import_code:
+            messagebox.showerror("Hata", "Geçersiz import kodu!")
+            return
+
+        try:
+            start = import_code.find("===KLAD_MACRO_EXPORT_START===") + len("===KLAD_MACRO_EXPORT_START===")
+            end = import_code.find("===KLAD_MACRO_EXPORT_END===")
+            encoded = import_code[start:end].strip()
+
+            json_str = base64.b64decode(encoded.encode('utf-8')).decode('utf-8')
+            group = json.loads(json_str)
+
+            # Yeni ID ata
+            group['id'] = str(uuid.uuid4())
+
+            # Template resimlerini kaydet
+            for template in group.get('templates', []):
+                if 'image_data' in template and template['image_data']:
+                    try:
+                        img_data = base64.b64decode(template['image_data'])
+                        new_filename = f"imported_{uuid.uuid4().hex[:8]}.png"
+                        img_path = IMAGES_FOLDER / new_filename
+                        with open(img_path, 'wb') as f:
+                            f.write(img_data)
+                        template['file'] = new_filename
+                    except Exception as e:
+                        print(f"Image import error: {e}")
+                    del template['image_data']
+
+            # Grubu ekle
+            self.manager.groups.append(group)
+            self.manager.refresh_group_list()
+            self.manager.add_log(f"Preset'ten grup import edildi: {group['name']}", "INFO")
+
+            messagebox.showinfo("Başarılı", f"'{group['name']}' grubu preset'ten import edildi!")
 
         except Exception as e:
             messagebox.showerror("Hata", f"Import başarısız: {str(e)}")

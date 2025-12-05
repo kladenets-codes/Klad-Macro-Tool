@@ -1,6 +1,9 @@
 # Claude Code
 .claude/
 
+# Development docs
+IMPROVEMENT_TODO.md
+
 # Node modules
 node_modules/
 
@@ -8,7 +11,7 @@ node_modules/
 .env
 .env.local
 .env.*.local
-
+.images/
 # IDE
 .vscode/
 .idea/

@@ -4,20 +4,47 @@ Groups System with Multiprocessing
 """
 
 import customtkinter as ctk
-from tkinter import messagebox, colorchooser
+from tkinter import messagebox
 import tkinter as tk
-import json
 import cv2
 import numpy as np
 from pathlib import Path
-from PIL import Image, ImageTk, ImageGrab
 import keyboard
 import time
 import multiprocessing
 from multiprocessing import Process, Queue, Value
 import logging
-import uuid
-import mss
+import copy
+
+# Core module imports
+from core import (
+    # Constants
+    COLORS,
+    LOG_COLORS,
+    MACRO_ACTION_COLORS,
+    MACRO_ACTION_LABELS,
+    STATUS_CHECK_INTERVAL_MS,
+    TEST_CYCLE_INTERVAL_MS,
+    DEFAULT_TIMING,
+    DEFAULT_SEARCH_REGION,
+    EXPORT_START_MARKER,
+    EXPORT_END_MARKER,
+    MIN_REGION_SIZE,
+
+    # Functions
+    group_worker,
+    load_config as core_load_config,
+    save_config as core_save_config,
+    get_conflicting_keys,
+    check_missing_template_images,
+    is_hotkey_used,
+    generate_export_code,
+    parse_import_code,
+    get_default_group,
+)
+
+# UI module imports - lazy loaded for faster startup
+# Dialog classes are imported when first needed
 
 # CustomTkinter ayarları
 ctk.set_appearance_mode("dark")
@@ -39,274 +66,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ==================== WORKER PROCESS FUNCTION ====================
-
-def group_worker(group_data, command_queue, status_queue, running_flag):
-    """
-    Worker process for each group.
-    Runs independently and listens for commands.
-    """
-    group_id = group_data['id']
-    group_name = group_data['name']
-
-    # Load templates (grayscale for faster matching)
-    loaded_templates = []
-    for template in group_data.get('templates', []):
-        if not template.get('enabled', True):
-            continue
-        template_path = IMAGES_FOLDER / template['file']
-        if template_path.exists():
-            img = cv2.imread(str(template_path), cv2.IMREAD_COLOR)
-            if img is not None:
-                # Grayscale'e çevir (3x daha hızlı matching)
-                img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                loaded_templates.append({
-                    'name': template['name'],
-                    'image': img_gray,
-                    'threshold': template['threshold'],
-                    'key_combo': template.get('key_combo', ''),
-                    'color': template.get('color', '#00ff88'),
-                    'timing': template.get('timing', {"pre_delay": 1, "hold_time": 1, "post_delay": 1}),
-                    'use_macro': template.get('use_macro', False),
-                    'macro': template.get('macro', [])
-                })
-
-    search_running = False
-    last_spam_time = 0
-
-    # Settings
-    spam_enabled = group_data.get('spam_enabled', False)
-    spam_key = group_data.get('spam_key', None)
-    spam_timing = group_data.get('spam_timing', {"pre_delay": 1, "hold_time": 1, "post_delay": 1})
-    spam_interval = group_data.get('spam_key_interval', 0.025)
-    search_region = group_data.get('search_region', [0, 0, 100, 100])
-
-    def press_key_with_timing(key, timing):
-        """Press a key with timing"""
-        pre_delay = timing.get("pre_delay", 1) / 1000.0
-        hold_time = timing.get("hold_time", 1) / 1000.0
-        post_delay = timing.get("post_delay", 1) / 1000.0
-
-        if pre_delay > 0:
-            time.sleep(pre_delay)
-
-        keyboard.press(key)
-        if hold_time > 0:
-            time.sleep(hold_time)
-        keyboard.release(key)
-
-        if post_delay > 0:
-            time.sleep(post_delay)
-
-    def press_key_combo(key_combo, timing):
-        """Press key combination with timing"""
-        pre_delay = timing.get("pre_delay", 1) / 1000.0
-        hold_time = timing.get("hold_time", 1) / 1000.0
-        post_delay = timing.get("post_delay", 1) / 1000.0
-
-        keys = [k.strip().lower() for k in key_combo.split('+')]
-        modifiers = []
-        regular_keys = []
-
-        for key in keys:
-            if key in ['shift', 'alt', 'ctrl', 'control']:
-                modifiers.append(key)
-            else:
-                regular_keys.append(key)
-
-        if pre_delay > 0:
-            time.sleep(pre_delay)
-
-        for mod in modifiers:
-            keyboard.press(mod)
-
-        for key in regular_keys:
-            keyboard.press(key)
-            if hold_time > 0:
-                time.sleep(hold_time)
-            keyboard.release(key)
-
-        for mod in reversed(modifiers):
-            keyboard.release(mod)
-
-        if post_delay > 0:
-            time.sleep(post_delay)
-
-    def execute_macro(macro_list):
-        """Execute a macro sequence (Logitech G Hub style)"""
-        for action in macro_list:
-            action_type = action.get('action', '')
-
-            if action_type == 'key_down':
-                key = action.get('key', '')
-                if key:
-                    keyboard.press(key)
-
-            elif action_type == 'key_up':
-                key = action.get('key', '')
-                if key:
-                    keyboard.release(key)
-
-            elif action_type == 'key_press':
-                key = action.get('key', '')
-                if key:
-                    keyboard.press(key)
-                    keyboard.release(key)
-
-            elif action_type == 'sleep':
-                ms = action.get('ms', 0)
-                if ms > 0:
-                    time.sleep(ms / 1000.0)
-
-    def press_spam_key():
-        """Press spam key"""
-        nonlocal last_spam_time
-        if not spam_enabled or not spam_key:
-            return
-
-        current_time = time.perf_counter()
-        if current_time - last_spam_time >= spam_interval:
-            press_key_with_timing(spam_key, spam_timing)
-            last_spam_time = current_time
-
-    def process_frame(sct):
-        """Process single frame"""
-        nonlocal last_spam_time
-
-        if not loaded_templates:
-            press_spam_key()
-            return
-
-        # Frame süresini ölç
-        frame_start = time.perf_counter()
-
-        try:
-            # mss ile ekran yakalama (PIL'den ~5x daha hızlı)
-            monitor = {
-                "left": search_region[0],
-                "top": search_region[1],
-                "width": search_region[2] - search_region[0],
-                "height": search_region[3] - search_region[1]
-            }
-            sct_img = sct.grab(monitor)
-            # Direkt grayscale'e çevir (daha hızlı)
-            screenshot = np.array(sct_img)[:, :, :3]  # BGRA -> BGR (alpha kaldır)
-            screenshot_gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
-        except Exception as e:
-            return
-
-        found_match = None
-
-        for data in loaded_templates:
-            try:
-                result = cv2.matchTemplate(screenshot_gray, data['image'], cv2.TM_CCOEFF_NORMED)
-                _, max_val, _, _ = cv2.minMaxLoc(result)
-
-                if max_val >= data['threshold']:
-                    found_match = data
-                    break
-            except:
-                pass
-
-        # Frame süresini hesapla
-        frame_time_ms = (time.perf_counter() - frame_start) * 1000
-
-        if found_match:
-            # Send color update to main process
-            status_queue.put({
-                'group_id': group_id,
-                'type': 'match',
-                'color': found_match['color'],
-                'template': found_match['name'],
-                'time_ms': round(frame_time_ms, 2)
-            })
-
-            # Makro modu veya basit mod
-            if found_match.get('use_macro') and found_match.get('macro'):
-                execute_macro(found_match['macro'])
-            else:
-                press_key_combo(found_match['key_combo'], found_match.get('timing', {}))
-
-            status_queue.put({
-                'group_id': group_id,
-                'type': 'match',
-                'color': '#00FF00'
-            })
-        else:
-            press_spam_key()
-
-    # Main loop
-    logger.info(f"[{group_name}] Worker started")
-    status_queue.put({'group_id': group_id, 'type': 'status', 'status': 'ready'})
-
-    # FPS tracking
-    frame_count = 0
-    fps_start_time = time.perf_counter()
-    last_fps_report = time.perf_counter()
-
-    # mss instance oluştur (worker başına bir tane)
-    with mss.mss() as sct:
-        while running_flag.value:
-            # Check for commands
-            try:
-                while not command_queue.empty():
-                    cmd = command_queue.get_nowait()
-                    if cmd.get('action') == 'toggle':
-                        search_running = not search_running
-                        status = 'running' if search_running else 'stopped'
-                        status_queue.put({
-                            'group_id': group_id,
-                            'type': 'status',
-                            'status': status
-                        })
-                        logger.info(f"[{group_name}] {'Started' if search_running else 'Stopped'}")
-                        # FPS reset
-                        frame_count = 0
-                        fps_start_time = time.perf_counter()
-                    elif cmd.get('action') == 'stop':
-                        search_running = False
-                        status_queue.put({
-                            'group_id': group_id,
-                            'type': 'status',
-                            'status': 'stopped'
-                        })
-            except:
-                pass
-
-            # Process frame if running
-            if search_running:
-                try:
-                    process_frame(sct)
-                    frame_count += 1
-                except Exception as e:
-                    logger.error(f"[{group_name}] Error: {e}")
-
-                # Her 500ms'de bir FPS raporu gönder
-                current_time = time.perf_counter()
-                elapsed = current_time - fps_start_time
-
-                if current_time - last_fps_report >= 0.5:
-                    fps = frame_count / elapsed if elapsed > 0 else 0
-                    status_queue.put({
-                        'group_id': group_id,
-                        'type': 'fps',
-                        'fps': round(fps, 1),
-                        'name': group_name
-                    })
-                    last_fps_report = current_time
-
-                    # Her 5 saniyede FPS sayacını resetle (overflow önlemek için)
-                    if elapsed >= 5.0:
-                        frame_count = 0
-                        fps_start_time = current_time
-            else:
-                # Sadece beklerken sleep yap (CPU kullanımını düşürmek için)
-                time.sleep(0.01)
-
-    logger.info(f"[{group_name}] Worker stopped")
-
-
 # ==================== MAIN APPLICATION ====================
+# Note: group_worker is now imported from core.worker
 
 class ConfigManager:
     def __init__(self, root):
@@ -348,6 +109,10 @@ class ConfigManager:
         # UI state
         self.selected_group_index = None
         self.selected_template_index = None
+
+        # Widget pools for reuse
+        self.group_card_pool = []  # Reusable group cards
+        self.template_card_pool = []  # Reusable template cards
 
         # Indicator windows
         self.indicator_windows = {}  # group_id -> (window, label)
@@ -878,76 +643,52 @@ Kullanım:
     # ==================== GROUP MANAGEMENT ====================
 
     def refresh_group_list(self):
-        """Refresh the group list"""
-        for widget in self.group_scroll.winfo_children():
-            widget.destroy()
+        """Refresh the group list with widget reuse"""
+        existing_cards = [w for w in self.group_scroll.winfo_children()
+                         if isinstance(w, ctk.CTkFrame) and hasattr(w, '_group_index')]
 
-        for i, group in enumerate(self.groups):
-            self.create_group_card(i, group)
-
-    def get_conflicting_keys(self):
-        """Çakışan toggle key'leri bul (sadece aktif gruplar arasında)"""
-        key_counts = {}
-        for group in self.groups:
-            if group.get('enabled', True):
-                key = group.get('toggle_key', '').lower()
-                if key:
-                    key_counts[key] = key_counts.get(key, 0) + 1
-        return {k for k, v in key_counts.items() if v > 1}
-
-    def check_missing_template_images(self):
-        """Aktif gruplardaki eksik template görsellerini kontrol et"""
-        missing = {}
-        for group in self.groups:
-            if not group.get('enabled', True):
-                continue
-            group_missing = []
-            for template in group.get('templates', []):
-                if not template.get('enabled', True):
-                    continue
-                img_file = template.get('file', '')
-                if not img_file:
-                    group_missing.append(f"{template.get('name', 'Unnamed')} (dosya yok)")
-                else:
-                    img_path = IMAGES_FOLDER / img_file
-                    if not img_path.exists():
-                        group_missing.append(f"{template.get('name', 'Unnamed')} ({img_file})")
-            if group_missing:
-                missing[group.get('name', 'Unnamed Group')] = group_missing
-        return missing
-
-    def create_group_card(self, index, group):
-        """Create a group card"""
-        is_selected = index == self.selected_group_index
-        is_enabled = group.get('enabled', True)
-
-        # Çakışan key kontrolü
+        # Çakışan key'leri bir kez hesapla
         conflicting_keys = self.get_conflicting_keys()
-        has_conflict = is_enabled and group.get('toggle_key', '').lower() in conflicting_keys
 
-        # Renk belirleme
-        if is_selected:
-            card_color = self.colors["accent"]
-        elif has_conflict:
-            card_color = "#4a2020"  # Koyu kırmızı
-        elif is_enabled:
-            card_color = self.colors["bg_dark"]
-        else:
-            card_color = self.colors["bg_secondary"]
+        # Gerekli kart sayısı
+        needed = len(self.groups)
 
+        # Fazla kartları pool'a taşı
+        while len(existing_cards) > needed:
+            card = existing_cards.pop()
+            card.pack_forget()
+            self.group_card_pool.append(card)
+
+        # Eksik kartları oluştur veya pool'dan al
+        while len(existing_cards) < needed:
+            if self.group_card_pool:
+                card = self.group_card_pool.pop()
+            else:
+                card = self._create_empty_group_card()
+            existing_cards.append(card)
+
+        # Tüm kartları güncelle
+        for i, group in enumerate(self.groups):
+            card = existing_cards[i]
+            self._update_group_card(card, i, group, conflicting_keys)
+            card.pack(fill="x", pady=4, padx=4)
+
+    def _create_empty_group_card(self):
+        """Create an empty group card template"""
         card = ctk.CTkFrame(
             self.group_scroll,
-            fg_color=card_color,
+            fg_color=self.colors["bg_dark"],
             corner_radius=10,
             height=60
         )
-        card.pack(fill="x", pady=4, padx=4)
         card.pack_propagate(False)
+        card._group_index = None
 
         content = ctk.CTkFrame(card, fg_color="transparent")
         content.pack(fill="both", expand=True, padx=12, pady=10)
+        card._content = content
 
-        # Toggle switch (grup aktif/pasif)
+        # Toggle switch
         toggle_switch = ctk.CTkSwitch(
             content,
             text="",
@@ -958,68 +699,160 @@ Kullanım:
             fg_color=self.colors["border"],
             progress_color=self.colors["success"],
             button_color="#ffffff",
-            button_hover_color="#eeeeee",
-            command=lambda idx=index: self.toggle_group_enabled(idx)
+            button_hover_color="#eeeeee"
         )
         toggle_switch.pack(side="left", padx=(0, 10))
-        if is_enabled:
-            toggle_switch.select()
-        else:
-            toggle_switch.deselect()
+        card._toggle_switch = toggle_switch
 
         # Info frame
         info_frame = ctk.CTkFrame(content, fg_color="transparent")
         info_frame.pack(side="left", fill="both", expand=True)
+        card._info_frame = info_frame
 
-        # Group name - seçili durumda beyaz, değilse normal
-        name_color = "#ffffff" if is_selected else (self.colors["text"] if is_enabled else self.colors["text_secondary"])
         name_label = ctk.CTkLabel(
             info_frame,
-            text=group['name'],
+            text="",
             font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=name_color,
+            text_color=self.colors["text"],
             anchor="w"
         )
         name_label.pack(anchor="w")
+        card._name_label = name_label
 
-        # Spam info - küçük yazı
-        spam_text = f"Spam: {group.get('spam_key', '-')}" if group.get('spam_enabled') else "Spam: Kapalı"
-        spam_color = "#cccccc" if is_selected else self.colors["text_secondary"]
         spam_label = ctk.CTkLabel(
             info_frame,
-            text=spam_text,
+            text="",
             font=ctk.CTkFont(size=11),
-            text_color=spam_color,
+            text_color=self.colors["text_secondary"],
             anchor="w"
         )
         spam_label.pack(anchor="w")
+        card._spam_label = spam_label
 
-        # Toggle key badge - sağda, kontrastlı
-        badge_bg = "#1a5f7a" if is_selected else self.colors["border"]
-        badge_text_color = "#ffffff" if is_selected else self.colors["text_secondary"]
+        # Key badge
         key_badge = ctk.CTkLabel(
             content,
-            text=group.get('toggle_key', '?').upper(),
+            text="",
             font=ctk.CTkFont(size=10, weight="bold"),
-            text_color=badge_text_color,
-            fg_color=badge_bg,
+            text_color=self.colors["text_secondary"],
+            fg_color=self.colors["border"],
             corner_radius=4,
             padx=8,
             pady=4
         )
         key_badge.pack(side="right")
+        card._key_badge = key_badge
 
-        # Click handlers
-        for widget in [card, content, info_frame, name_label, spam_label, key_badge]:
+        return card
+
+    def _update_group_card(self, card, index, group, conflicting_keys):
+        """Update an existing group card with new data"""
+        is_selected = index == self.selected_group_index
+        is_enabled = group.get('enabled', True)
+        has_conflict = is_enabled and group.get('toggle_key', '').lower() in conflicting_keys
+
+        # Renk belirleme
+        if is_selected:
+            card_color = self.colors["accent"]
+        elif has_conflict:
+            card_color = "#4a2020"
+        elif is_enabled:
+            card_color = self.colors["bg_dark"]
+        else:
+            card_color = self.colors["bg_secondary"]
+
+        card.configure(fg_color=card_color)
+        card._group_index = index
+
+        # Toggle switch güncelle
+        card._toggle_switch.configure(command=lambda idx=index: self.toggle_group_enabled(idx))
+        if is_enabled:
+            card._toggle_switch.select()
+        else:
+            card._toggle_switch.deselect()
+
+        # Name label güncelle
+        name_color = "#ffffff" if is_selected else (self.colors["text"] if is_enabled else self.colors["text_secondary"])
+        card._name_label.configure(text=group['name'], text_color=name_color)
+
+        # Spam label güncelle
+        spam_text = f"Spam: {group.get('spam_key', '-')}" if group.get('spam_enabled') else "Spam: Kapalı"
+        spam_color = "#cccccc" if is_selected else self.colors["text_secondary"]
+        card._spam_label.configure(text=spam_text, text_color=spam_color)
+
+        # Key badge güncelle
+        badge_bg = "#1a5f7a" if is_selected else self.colors["border"]
+        badge_text_color = "#ffffff" if is_selected else self.colors["text_secondary"]
+        card._key_badge.configure(
+            text=group.get('toggle_key', '?').upper(),
+            fg_color=badge_bg,
+            text_color=badge_text_color
+        )
+
+        # Click handlers - tüm widget'lara bağla
+        for widget in [card, card._content, card._info_frame, card._name_label, card._spam_label, card._key_badge]:
             widget.bind("<Button-1>", lambda e, idx=index: self.select_group(idx))
 
+    def get_conflicting_keys(self):
+        """Çakışan toggle key'leri bul (sadece aktif gruplar arasında)"""
+        return get_conflicting_keys(self.groups)
+
+    def check_missing_template_images(self):
+        """Aktif gruplardaki eksik template görsellerini kontrol et"""
+        return check_missing_template_images(self.groups, IMAGES_FOLDER)
+
     def select_group(self, index):
-        """Select a group"""
+        """Select a group - only update changed cards"""
+        if self.selected_group_index == index:
+            return  # Zaten seçili, işlem yapma
+
+        old_index = self.selected_group_index
         self.selected_group_index = index
         self.selected_template_index = None
-        self.refresh_group_list()
+
+        # Sadece eski ve yeni seçili kartları güncelle
+        self._update_group_card_selection(old_index, False)
+        self._update_group_card_selection(index, True)
+
         self.update_group_details()
         self.refresh_template_list()
+
+    def _update_group_card_selection(self, index, is_selected):
+        """Update only the selection state of a specific group card"""
+        if index is None or index >= len(self.groups):
+            return
+
+        # Kartı bul
+        for card in self.group_scroll.winfo_children():
+            if hasattr(card, '_group_index') and card._group_index == index:
+                group = self.groups[index]
+                is_enabled = group.get('enabled', True)
+                conflicting_keys = self.get_conflicting_keys()
+                has_conflict = is_enabled and group.get('toggle_key', '').lower() in conflicting_keys
+
+                # Renk güncelle
+                if is_selected:
+                    card_color = self.colors["accent"]
+                elif has_conflict:
+                    card_color = "#4a2020"
+                elif is_enabled:
+                    card_color = self.colors["bg_dark"]
+                else:
+                    card_color = self.colors["bg_secondary"]
+
+                card.configure(fg_color=card_color)
+
+                # Text renkleri güncelle
+                name_color = "#ffffff" if is_selected else (self.colors["text"] if is_enabled else self.colors["text_secondary"])
+                card._name_label.configure(text_color=name_color)
+
+                spam_color = "#cccccc" if is_selected else self.colors["text_secondary"]
+                card._spam_label.configure(text_color=spam_color)
+
+                badge_bg = "#1a5f7a" if is_selected else self.colors["border"]
+                badge_text_color = "#ffffff" if is_selected else self.colors["text_secondary"]
+                card._key_badge.configure(fg_color=badge_bg, text_color=badge_text_color)
+                break
 
     def toggle_group_enabled(self, index):
         """Toggle group enabled/disabled"""
@@ -1055,45 +888,64 @@ Kullanım:
             self.group_notes_label.configure(text="")
 
     def refresh_template_list(self):
-        """Refresh template list for selected group"""
-        for widget in self.template_scroll.winfo_children():
-            widget.destroy()
+        """Refresh template list for selected group with widget reuse"""
+        existing_cards = [w for w in self.template_scroll.winfo_children()
+                         if isinstance(w, ctk.CTkFrame) and hasattr(w, '_template_index')]
 
         if self.selected_group_index is None or self.selected_group_index >= len(self.groups):
+            # Tüm kartları gizle ve pool'a taşı
+            for card in existing_cards:
+                card.pack_forget()
+                self.template_card_pool.append(card)
             return
 
         group = self.groups[self.selected_group_index]
         templates = group.get('templates', [])
+        needed = len(templates)
 
-        # Drop indicator for templates
-        self.template_drop_indicator = ctk.CTkFrame(
-            self.template_scroll,
-            fg_color=self.colors["accent"],
-            height=3
-        )
+        # Drop indicator for templates (lazy create)
+        if not hasattr(self, 'template_drop_indicator') or self.template_drop_indicator is None:
+            self.template_drop_indicator = ctk.CTkFrame(
+                self.template_scroll,
+                fg_color=self.colors["accent"],
+                height=3
+            )
 
+        # Fazla kartları pool'a taşı
+        while len(existing_cards) > needed:
+            card = existing_cards.pop()
+            card.pack_forget()
+            self.template_card_pool.append(card)
+
+        # Eksik kartları oluştur veya pool'dan al
+        while len(existing_cards) < needed:
+            if self.template_card_pool:
+                card = self.template_card_pool.pop()
+            else:
+                card = self._create_empty_template_card()
+            existing_cards.append(card)
+
+        # Tüm kartları güncelle
         for i, template in enumerate(templates):
-            self.create_template_card(i, template)
+            card = existing_cards[i]
+            self._update_template_card(card, i, template)
+            card.pack(fill="x", pady=4, padx=4)
 
-    def create_template_card(self, index, template):
-        """Create a template card"""
-        is_selected = index == self.selected_template_index
-        is_enabled = template.get("enabled", True)
-
+    def _create_empty_template_card(self):
+        """Create an empty template card template"""
         card = ctk.CTkFrame(
             self.template_scroll,
-            fg_color=self.colors["accent"] if is_selected else (
-                self.colors["bg_dark"] if is_enabled else self.colors["bg_secondary"]
-            ),
+            fg_color=self.colors["bg_dark"],
             corner_radius=10,
             height=60
         )
-        card.pack(fill="x", pady=4, padx=4)
         card.pack_propagate(False)
-        card.template_index = index  # Store index for drag & drop
+        card._template_index = None
+        card.template_index = None  # For drag & drop compatibility
 
         content = ctk.CTkFrame(card, fg_color="transparent")
         content.pack(fill="both", expand=True, padx=12, pady=10)
+        card._content = content
 
         # Drag handle
         drag_handle = ctk.CTkLabel(
@@ -1105,11 +957,7 @@ Kullanım:
             cursor="fleur"
         )
         drag_handle.pack(side="left", padx=(0, 8))
-
-        # Drag & drop bindings
-        drag_handle.bind("<Button-1>", lambda e, c=card, idx=index: self.template_drag_start(e, c, idx))
-        drag_handle.bind("<B1-Motion>", lambda e, c=card: self.template_drag_motion(e, c))
-        drag_handle.bind("<ButtonRelease-1>", lambda e, c=card: self.template_drag_end(e, c))
+        card._drag_handle = drag_handle
 
         # Color indicator
         color_indicator = ctk.CTkFrame(
@@ -1117,48 +965,46 @@ Kullanım:
             width=5,
             height=40,
             corner_radius=2,
-            fg_color=template.get("color", "#00ff88")
+            fg_color="#00ff88"
         )
         color_indicator.pack(side="left", padx=(0, 12))
         color_indicator.pack_propagate(False)
+        card._color_indicator = color_indicator
 
-        # Info - ortalı düzen
+        # Info frame
         info_frame = ctk.CTkFrame(content, fg_color="transparent")
         info_frame.pack(side="left", fill="both", expand=True)
+        card._info_frame = info_frame
 
-        name_color = "#000000" if is_selected else (self.colors["text"] if is_enabled else self.colors["text_secondary"])
-
-        # Template adı
         name_label = ctk.CTkLabel(
             info_frame,
-            text=template['name'],
+            text="",
             font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=name_color,
+            text_color=self.colors["text"],
             anchor="w"
         )
         name_label.pack(anchor="w", pady=(0, 2))
+        card._name_label = name_label
 
-        # Tuş bilgisi - daha düzgün
-        key_text = template.get('key_combo', '?')
         key_label = ctk.CTkLabel(
             info_frame,
-            text=key_text,
+            text="",
             font=ctk.CTkFont(size=11),
-            text_color="#000000" if is_selected else self.colors["text_secondary"],
+            text_color=self.colors["text_secondary"],
             anchor="w"
         )
         key_label.pack(anchor="w")
+        card._key_label = key_label
 
-        # Enable switch - sağda sabit
+        # Enable switch
         switch_frame = ctk.CTkFrame(content, fg_color="transparent", width=50)
         switch_frame.pack(side="right")
         switch_frame.pack_propagate(False)
+        card._switch_frame = switch_frame
 
-        enable_var = ctk.BooleanVar(value=is_enabled)
         switch = ctk.CTkSwitch(
             switch_frame,
             text="",
-            variable=enable_var,
             width=42,
             height=22,
             switch_width=38,
@@ -1166,25 +1012,126 @@ Kullanım:
             fg_color=self.colors["border"],
             progress_color=self.colors["success"],
             button_color="#ffffff",
-            button_hover_color="#e0e0e0",
-            command=lambda idx=index, var=enable_var: self.toggle_template_enabled(idx, var)
+            button_hover_color="#e0e0e0"
         )
         switch.pack(expand=True)
+        card._switch = switch
 
-        # Click handler
-        for widget in [card, content, info_frame, name_label, key_label]:
+        return card
+
+    def _update_template_card(self, card, index, template):
+        """Update an existing template card with new data"""
+        is_selected = index == self.selected_template_index
+        is_enabled = template.get("enabled", True)
+
+        # Card rengi
+        if is_selected:
+            card_color = self.colors["accent"]
+        elif is_enabled:
+            card_color = self.colors["bg_dark"]
+        else:
+            card_color = self.colors["bg_secondary"]
+
+        card.configure(fg_color=card_color)
+        card._template_index = index
+        card.template_index = index  # For drag & drop
+
+        # Drag handle bindings güncelle
+        card._drag_handle.bind("<Button-1>", lambda e, c=card, idx=index: self.template_drag_start(e, c, idx))
+        card._drag_handle.bind("<B1-Motion>", lambda e, c=card: self.template_drag_motion(e, c))
+        card._drag_handle.bind("<ButtonRelease-1>", lambda e, c=card: self.template_drag_end(e, c))
+
+        # Color indicator güncelle
+        card._color_indicator.configure(fg_color=template.get("color", "#00ff88"))
+
+        # Name label güncelle
+        name_color = "#000000" if is_selected else (self.colors["text"] if is_enabled else self.colors["text_secondary"])
+        card._name_label.configure(text=template['name'], text_color=name_color)
+
+        # Key label güncelle
+        key_color = "#000000" if is_selected else self.colors["text_secondary"]
+        card._key_label.configure(text=template.get('key_combo', '?'), text_color=key_color)
+
+        # Switch güncelle
+        card._switch.configure(command=lambda idx=index: self._on_template_switch_toggle(idx, card._switch))
+        if is_enabled:
+            card._switch.select()
+        else:
+            card._switch.deselect()
+
+        # Click handlers
+        for widget in [card, card._content, card._info_frame, card._name_label, card._key_label]:
             widget.bind("<Button-1>", lambda e, idx=index: self.select_template(idx))
 
-    def select_template(self, index):
-        """Select a template"""
-        self.selected_template_index = index
-        self.refresh_template_list()
-
-    def toggle_template_enabled(self, index, var):
-        """Toggle template enabled state"""
+    def _on_template_switch_toggle(self, index, switch):
+        """Handle template switch toggle - update only affected card"""
         if self.selected_group_index is not None:
-            self.groups[self.selected_group_index]['templates'][index]['enabled'] = var.get()
-            self.refresh_template_list()
+            is_enabled = switch.get()
+            self.groups[self.selected_group_index]['templates'][index]['enabled'] = is_enabled
+            # Sadece bu kartın rengini güncelle
+            self._update_template_card_color(index, is_enabled)
+
+    def _update_template_card_color(self, index, is_enabled):
+        """Update only the color of a specific template card"""
+        for card in self.template_scroll.winfo_children():
+            if hasattr(card, '_template_index') and card._template_index == index:
+                is_selected = index == self.selected_template_index
+                if is_selected:
+                    card_color = self.colors["accent"]
+                elif is_enabled:
+                    card_color = self.colors["bg_dark"]
+                else:
+                    card_color = self.colors["bg_secondary"]
+                card.configure(fg_color=card_color)
+
+                # Text renklerini de güncelle
+                name_color = "#000000" if is_selected else (self.colors["text"] if is_enabled else self.colors["text_secondary"])
+                card._name_label.configure(text_color=name_color)
+                break
+
+    def select_template(self, index):
+        """Select a template - only update changed cards"""
+        if self.selected_template_index == index:
+            return  # Zaten seçili
+
+        old_index = self.selected_template_index
+        self.selected_template_index = index
+
+        # Sadece eski ve yeni seçili kartları güncelle
+        self._update_template_card_selection(old_index, False)
+        self._update_template_card_selection(index, True)
+
+    def _update_template_card_selection(self, index, is_selected):
+        """Update only the selection state of a specific template card"""
+        if index is None or self.selected_group_index is None:
+            return
+
+        templates = self.groups[self.selected_group_index].get('templates', [])
+        if index >= len(templates):
+            return
+
+        template = templates[index]
+        is_enabled = template.get("enabled", True)
+
+        for card in self.template_scroll.winfo_children():
+            if hasattr(card, '_template_index') and card._template_index == index:
+                # Renk güncelle
+                if is_selected:
+                    card_color = self.colors["accent"]
+                elif is_enabled:
+                    card_color = self.colors["bg_dark"]
+                else:
+                    card_color = self.colors["bg_secondary"]
+
+                card.configure(fg_color=card_color)
+
+                # Text renkleri güncelle
+                name_color = "#000000" if is_selected else (self.colors["text"] if is_enabled else self.colors["text_secondary"])
+                card._name_label.configure(text_color=name_color)
+
+                key_color = "#000000" if is_selected else self.colors["text_secondary"]
+                card._key_label.configure(text_color=key_color)
+                break
 
     # ==================== TEMPLATE DRAG & DROP ====================
 
@@ -1270,6 +1217,7 @@ Kullanım:
 
     def add_group(self):
         """Add a new group"""
+        from ui.dialogs.group_dialogs import AddGroupDialog
         AddGroupDialog(self.root, self)
 
     def edit_group(self):
@@ -1277,6 +1225,7 @@ Kullanım:
         if self.selected_group_index is None:
             messagebox.showwarning("Uyarı", "Önce bir grup seçin!")
             return
+        from ui.dialogs.group_dialogs import EditGroupDialog
         EditGroupDialog(self.root, self, self.selected_group_index)
 
     def delete_group(self):
@@ -1299,22 +1248,26 @@ Kullanım:
             messagebox.showwarning("Uyarı", "Önce bir grup seçin!")
             return
 
+        from ui.dialogs.preset_dialogs import ExportGroupDialog
         group = self.groups[self.selected_group_index]
-        ExportGroupDialog(self.root, group)
+        ExportGroupDialog(self.root, group, IMAGES_FOLDER)
 
     def import_group(self):
         """Import group from text"""
-        ImportGroupDialog(self.root, self)
+        from ui.dialogs.preset_dialogs import ImportGroupDialog
+        ImportGroupDialog(self.root, self, IMAGES_FOLDER)
 
     def open_presets(self):
         """Open presets dialog"""
-        PresetDialog(self.root, self)
+        from ui.dialogs.preset_dialogs import PresetDialog
+        PresetDialog(self.root, self, IMAGES_FOLDER)
 
     def add_template(self):
         """Add template to selected group"""
         if self.selected_group_index is None:
             messagebox.showwarning("Uyarı", "Önce bir grup seçin!")
             return
+        from ui.dialogs.template_dialogs import AddTemplateDialog
         AddTemplateDialog(self.root, self)
 
     def edit_template(self):
@@ -1322,6 +1275,7 @@ Kullanım:
         if self.selected_group_index is None or self.selected_template_index is None:
             messagebox.showwarning("Uyarı", "Önce bir template seçin!")
             return
+        from ui.dialogs.template_dialogs import EditTemplateDialog
         template = self.groups[self.selected_group_index]['templates'][self.selected_template_index]
         EditTemplateDialog(self.root, self, template, self.selected_template_index)
 
@@ -1391,12 +1345,7 @@ Kullanım:
 
     def is_hotkey_used(self, key, exclude_group_id=None):
         """Check if a hotkey is already used by another group"""
-        for group in self.groups:
-            if exclude_group_id and group.get('id') == exclude_group_id:
-                continue
-            if group.get('toggle_key', '').lower() == key.lower():
-                return group['name']
-        return None
+        return is_hotkey_used(self.groups, key, exclude_group_id)
 
     # ==================== TEST MODE ====================
 
@@ -1990,34 +1939,13 @@ Kullanım:
 
     def load_config(self):
         """Load config from JSON"""
-        if not CONFIG_FILE.exists():
-            # Default config with one group
-            self.groups = [
-                {
-                    "id": str(uuid.uuid4()),
-                    "name": "Default Group",
-                    "enabled": True,
-                    "toggle_key": "num lock",
-                    "spam_key": '"',
-                    "spam_enabled": True,
-                    "spam_timing": {"pre_delay": 1, "hold_time": 1, "post_delay": 1},
-                    "spam_key_interval": 0.025,
-                    "search_region": [430, 275, 750, 460],
-                    "cycle_delay": 0.01,
-                    "notes": "",
-                    "templates": []
-                }
-            ]
-            return
-
         try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                self.groups = data.get("groups", [])
-                self.global_settings = data.get("global_settings", {})
-                self.presets = data.get("presets", [])
+            self.groups, self.global_settings, self.presets = core_load_config(CONFIG_FILE)
         except Exception as e:
             messagebox.showerror("Hata", f"Config yüklenemedi: {e}")
+            self.groups = [get_default_group()]
+            self.global_settings = {"debug_enabled": False, "fps_overlay_enabled": True}
+            self.presets = []
 
     def add_log(self, message, level="INFO"):
         """Log konsoluna mesaj ekle"""
@@ -2070,17 +1998,17 @@ Kullanım:
             self.global_settings["debug_enabled"] = self.debug_var.get()
             self.global_settings["fps_overlay_enabled"] = self.fps_overlay_var.get()
 
-            data = {
-                "groups": self.groups,
-                "global_settings": self.global_settings,
-                "presets": getattr(self, 'presets', [])
-            }
+            success = core_save_config(
+                CONFIG_FILE,
+                self.groups,
+                self.global_settings,
+                getattr(self, 'presets', [])
+            )
 
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-
-            if not silent:
+            if success and not silent:
                 messagebox.showinfo("Başarılı", "Config kaydedildi!")
+            elif not success:
+                messagebox.showerror("Hata", "Config kaydedilemedi!")
         except Exception as e:
             messagebox.showerror("Hata", f"Config kaydedilemedi: {e}")
 
@@ -2088,1953 +2016,8 @@ Kullanım:
         """Handle window close"""
         if self.bot_active:
             self.stop_all_bots()
+        self.save_config(silent=True)  # Auto-save on close
         self.root.quit()
-
-
-# ==================== DIALOG CLASSES ====================
-
-class AddGroupDialog:
-    """Dialog for adding new group"""
-    def __init__(self, parent, manager):
-        self.manager = manager
-        self.selected_key = None
-        self.spam_key = None
-
-        self.top = ctk.CTkToplevel(parent)
-        self.top.title("Yeni Grup Ekle")
-        self.top.geometry("500x650")
-        self.top.transient(parent)
-        self.top.grab_set()
-        self.top.resizable(False, False)
-        self.top.after(10, self.center_window)
-
-        main = ctk.CTkFrame(self.top, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=30, pady=25)
-
-        ctk.CTkLabel(main, text="📁 Yeni Grup", font=ctk.CTkFont(size=20, weight="bold"),
-                    text_color="#00d4ff").pack(pady=(0, 20))
-
-        # Name
-        name_frame = ctk.CTkFrame(main, fg_color="transparent")
-        name_frame.pack(fill="x", pady=8)
-        ctk.CTkLabel(name_frame, text="Grup Adı:", width=100).pack(side="left")
-        self.name_entry = ctk.CTkEntry(name_frame, width=250, height=35)
-        self.name_entry.pack(side="left", padx=10)
-        self.name_entry.insert(0, f"Group {len(manager.groups) + 1}")
-
-        # Toggle key
-        key_frame = ctk.CTkFrame(main, fg_color="transparent")
-        key_frame.pack(fill="x", pady=8)
-        ctk.CTkLabel(key_frame, text="Start/Stop Tuşu:", width=100).pack(side="left")
-        self.key_btn = ctk.CTkButton(key_frame, text="Tuş Seç", width=150, height=35,
-                                      fg_color="#333333", hover_color="#444444",
-                                      command=self.capture_toggle_key)
-        self.key_btn.pack(side="left", padx=10)
-
-        # Spam settings
-        spam_frame = ctk.CTkFrame(main, fg_color="#1a1a1a", corner_radius=10)
-        spam_frame.pack(fill="x", pady=15)
-
-        spam_header = ctk.CTkFrame(spam_frame, fg_color="transparent")
-        spam_header.pack(fill="x", padx=15, pady=(15, 10))
-
-        self.spam_enabled_var = ctk.BooleanVar(value=False)
-        ctk.CTkCheckBox(spam_header, text="Spam Tuşu Aktif", variable=self.spam_enabled_var,
-                       fg_color="#00d4ff", command=self.toggle_spam_options).pack(side="left")
-
-        self.spam_options = ctk.CTkFrame(spam_frame, fg_color="transparent")
-        self.spam_options.pack(fill="x", padx=15, pady=(0, 15))
-
-        spam_key_row = ctk.CTkFrame(self.spam_options, fg_color="transparent")
-        spam_key_row.pack(fill="x", pady=5)
-        ctk.CTkLabel(spam_key_row, text="Spam Tuşu:", width=80).pack(side="left")
-        self.spam_key_btn = ctk.CTkButton(spam_key_row, text="Tuş Seç", width=100, height=30,
-                                          fg_color="#333333", hover_color="#444444",
-                                          command=self.capture_spam_key, state="disabled")
-        self.spam_key_btn.pack(side="left", padx=10)
-
-        timing_row = ctk.CTkFrame(self.spam_options, fg_color="transparent")
-        timing_row.pack(fill="x", pady=5)
-        ctk.CTkLabel(timing_row, text="Önce:", width=40).pack(side="left")
-        self.pre_entry = ctk.CTkEntry(timing_row, width=50, height=28, state="disabled")
-        self.pre_entry.pack(side="left", padx=3)
-        ctk.CTkLabel(timing_row, text="Basılı:", width=40).pack(side="left", padx=(10, 0))
-        self.hold_entry = ctk.CTkEntry(timing_row, width=50, height=28, state="disabled")
-        self.hold_entry.pack(side="left", padx=3)
-        ctk.CTkLabel(timing_row, text="Sonra:", width=40).pack(side="left", padx=(10, 0))
-        self.post_entry = ctk.CTkEntry(timing_row, width=50, height=28, state="disabled")
-        self.post_entry.pack(side="left", padx=3)
-
-        # Search region
-        region_frame = ctk.CTkFrame(main, fg_color="transparent")
-        region_frame.pack(fill="x", pady=8)
-        ctk.CTkLabel(region_frame, text="Arama Bölgesi:", width=100).pack(side="left")
-        self.region_label = ctk.CTkLabel(region_frame, text="430,275 - 750,460")
-        self.region_label.pack(side="left", padx=10)
-        self.search_region = [430, 275, 750, 460]
-        ctk.CTkButton(region_frame, text="Seç", width=60, height=30,
-                     fg_color="#333333", hover_color="#444444",
-                     command=self.select_region).pack(side="left")
-
-        # Notes
-        notes_frame = ctk.CTkFrame(main, fg_color="#1a1a1a", corner_radius=10)
-        notes_frame.pack(fill="x", pady=10)
-
-        ctk.CTkLabel(notes_frame, text="Notlar:", font=ctk.CTkFont(size=12),
-                    text_color="#888888").pack(anchor="w", padx=15, pady=(10, 5))
-        self.notes_entry = ctk.CTkTextbox(notes_frame, width=420, height=60,
-                                          fg_color="#0d0d0d", corner_radius=6)
-        self.notes_entry.pack(padx=15, pady=(0, 10))
-
-        # Buttons
-        btn_frame = ctk.CTkFrame(main, fg_color="transparent")
-        btn_frame.pack(fill="x", pady=(20, 0))
-
-        ctk.CTkButton(btn_frame, text="✓ Ekle", width=120, height=40, fg_color="#00ff88",
-                     hover_color="#00cc6e", text_color="#000000",
-                     font=ctk.CTkFont(weight="bold"), command=self.save).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btn_frame, text="İptal", width=100, height=40, fg_color="#333333",
-                     hover_color="#444444", command=self.top.destroy).pack(side="left")
-
-    def center_window(self):
-        self.top.update_idletasks()
-        w, h = self.top.winfo_width(), self.top.winfo_height()
-        x = (self.top.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.top.winfo_screenheight() // 2) - (h // 2)
-        self.top.geometry(f'{w}x{h}+{x}+{y}')
-
-    def toggle_spam_options(self):
-        state = "normal" if self.spam_enabled_var.get() else "disabled"
-        self.spam_key_btn.configure(state=state)
-        self.pre_entry.configure(state=state)
-        self.hold_entry.configure(state=state)
-        self.post_entry.configure(state=state)
-        if state == "normal" and not self.pre_entry.get():
-            self.pre_entry.insert(0, "1")
-            self.hold_entry.insert(0, "1")
-            self.post_entry.insert(0, "1")
-
-    def capture_toggle_key(self):
-        CaptureKeyDialogSimple(self.top, self, "toggle")
-
-    def capture_spam_key(self):
-        CaptureKeyDialogSimple(self.top, self, "spam")
-
-    def select_region(self):
-        self.top.withdraw()
-        self.top.after(200, lambda: SelectRegionDialogSimple(self.top.master, self))
-
-    def save(self):
-        name = self.name_entry.get().strip()
-        if not name:
-            messagebox.showwarning("Uyarı", "Grup adı boş olamaz!")
-            return
-
-        if not self.selected_key:
-            messagebox.showwarning("Uyarı", "Start/Stop tuşu seçmelisiniz!")
-            return
-
-        # Get spam timing
-        try:
-            pre = int(self.pre_entry.get()) if self.pre_entry.get() else 1
-            hold = int(self.hold_entry.get()) if self.hold_entry.get() else 1
-            post = int(self.post_entry.get()) if self.post_entry.get() else 1
-        except:
-            pre = hold = post = 1
-
-        new_group = {
-            "id": str(uuid.uuid4()),
-            "name": name,
-            "enabled": True,
-            "toggle_key": self.selected_key,
-            "spam_key": self.spam_key,
-            "spam_enabled": self.spam_enabled_var.get(),
-            "spam_timing": {"pre_delay": pre, "hold_time": hold, "post_delay": post},
-            "spam_key_interval": 0.025,
-            "search_region": self.search_region,
-            "cycle_delay": 0.01,
-            "notes": self.notes_entry.get("1.0", "end-1c").strip(),
-            "templates": []
-        }
-
-        self.manager.groups.append(new_group)
-        self.manager.refresh_group_list()
-        self.top.destroy()
-
-
-class EditGroupDialog:
-    """Dialog for editing group"""
-    def __init__(self, parent, manager, index):
-        self.manager = manager
-        self.index = index
-        self.group = manager.groups[index]
-        self.selected_key = self.group.get('toggle_key')
-        self.spam_key = self.group.get('spam_key')
-        self.search_region = self.group.get('search_region', [430, 275, 750, 460])
-
-        self.top = ctk.CTkToplevel(parent)
-        self.top.title(f"Grubu Düzenle: {self.group['name']}")
-        self.top.geometry("500x650")
-        self.top.transient(parent)
-        self.top.grab_set()
-        self.top.resizable(False, False)
-        self.top.after(10, self.center_window)
-
-        main = ctk.CTkFrame(self.top, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=30, pady=25)
-
-        ctk.CTkLabel(main, text="✏️ Grubu Düzenle", font=ctk.CTkFont(size=20, weight="bold"),
-                    text_color="#00d4ff").pack(pady=(0, 20))
-
-        # Name
-        name_frame = ctk.CTkFrame(main, fg_color="transparent")
-        name_frame.pack(fill="x", pady=8)
-        ctk.CTkLabel(name_frame, text="Grup Adı:", width=100).pack(side="left")
-        self.name_entry = ctk.CTkEntry(name_frame, width=250, height=35)
-        self.name_entry.pack(side="left", padx=10)
-        self.name_entry.insert(0, self.group['name'])
-
-        # Toggle key
-        key_frame = ctk.CTkFrame(main, fg_color="transparent")
-        key_frame.pack(fill="x", pady=8)
-        ctk.CTkLabel(key_frame, text="Start/Stop Tuşu:", width=100).pack(side="left")
-        self.key_btn = ctk.CTkButton(key_frame, text=self.selected_key or "Tuş Seç", width=150, height=35,
-                                      fg_color="#333333", hover_color="#444444",
-                                      command=self.capture_toggle_key)
-        self.key_btn.pack(side="left", padx=10)
-
-        # Spam settings
-        spam_frame = ctk.CTkFrame(main, fg_color="#1a1a1a", corner_radius=10)
-        spam_frame.pack(fill="x", pady=15)
-
-        spam_header = ctk.CTkFrame(spam_frame, fg_color="transparent")
-        spam_header.pack(fill="x", padx=15, pady=(15, 10))
-
-        self.spam_enabled_var = ctk.BooleanVar(value=self.group.get('spam_enabled', False))
-        ctk.CTkCheckBox(spam_header, text="Spam Tuşu Aktif", variable=self.spam_enabled_var,
-                       fg_color="#00d4ff", command=self.toggle_spam_options).pack(side="left")
-
-        self.spam_options = ctk.CTkFrame(spam_frame, fg_color="transparent")
-        self.spam_options.pack(fill="x", padx=15, pady=(0, 15))
-
-        spam_key_row = ctk.CTkFrame(self.spam_options, fg_color="transparent")
-        spam_key_row.pack(fill="x", pady=5)
-        ctk.CTkLabel(spam_key_row, text="Spam Tuşu:", width=80).pack(side="left")
-        self.spam_key_btn = ctk.CTkButton(spam_key_row, text=self.spam_key or "Tuş Seç", width=100, height=30,
-                                          fg_color="#333333", hover_color="#444444",
-                                          command=self.capture_spam_key)
-        self.spam_key_btn.pack(side="left", padx=10)
-
-        timing = self.group.get('spam_timing', {"pre_delay": 1, "hold_time": 1, "post_delay": 1})
-        timing_row = ctk.CTkFrame(self.spam_options, fg_color="transparent")
-        timing_row.pack(fill="x", pady=5)
-        ctk.CTkLabel(timing_row, text="Önce:", width=40).pack(side="left")
-        self.pre_entry = ctk.CTkEntry(timing_row, width=50, height=28)
-        self.pre_entry.pack(side="left", padx=3)
-        self.pre_entry.insert(0, str(timing.get('pre_delay', 1)))
-        ctk.CTkLabel(timing_row, text="Basılı:", width=40).pack(side="left", padx=(10, 0))
-        self.hold_entry = ctk.CTkEntry(timing_row, width=50, height=28)
-        self.hold_entry.pack(side="left", padx=3)
-        self.hold_entry.insert(0, str(timing.get('hold_time', 1)))
-        ctk.CTkLabel(timing_row, text="Sonra:", width=40).pack(side="left", padx=(10, 0))
-        self.post_entry = ctk.CTkEntry(timing_row, width=50, height=28)
-        self.post_entry.pack(side="left", padx=3)
-        self.post_entry.insert(0, str(timing.get('post_delay', 1)))
-
-        # Update spam options state
-        self.toggle_spam_options()
-
-        # Search region
-        region_frame = ctk.CTkFrame(main, fg_color="transparent")
-        region_frame.pack(fill="x", pady=8)
-        ctk.CTkLabel(region_frame, text="Arama Bölgesi:", width=100).pack(side="left")
-        self.region_label = ctk.CTkLabel(region_frame,
-            text=f"{self.search_region[0]},{self.search_region[1]} - {self.search_region[2]},{self.search_region[3]}")
-        self.region_label.pack(side="left", padx=10)
-        ctk.CTkButton(region_frame, text="Seç", width=60, height=30,
-                     fg_color="#333333", hover_color="#444444",
-                     command=self.select_region).pack(side="left")
-
-        # Notes
-        notes_frame = ctk.CTkFrame(main, fg_color="#1a1a1a", corner_radius=10)
-        notes_frame.pack(fill="x", pady=10)
-
-        ctk.CTkLabel(notes_frame, text="Notlar:", font=ctk.CTkFont(size=12),
-                    text_color="#888888").pack(anchor="w", padx=15, pady=(10, 5))
-        self.notes_entry = ctk.CTkTextbox(notes_frame, width=420, height=60,
-                                          fg_color="#0d0d0d", corner_radius=6)
-        self.notes_entry.pack(padx=15, pady=(0, 10))
-        # Mevcut notları yükle
-        if self.group.get('notes'):
-            self.notes_entry.insert("1.0", self.group.get('notes', ''))
-
-        # Buttons
-        btn_frame = ctk.CTkFrame(main, fg_color="transparent")
-        btn_frame.pack(fill="x", pady=(20, 0))
-
-        ctk.CTkButton(btn_frame, text="✓ Kaydet", width=120, height=40, fg_color="#00ff88",
-                     hover_color="#00cc6e", text_color="#000000",
-                     font=ctk.CTkFont(weight="bold"), command=self.save).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btn_frame, text="İptal", width=100, height=40, fg_color="#333333",
-                     hover_color="#444444", command=self.top.destroy).pack(side="left")
-
-    def center_window(self):
-        self.top.update_idletasks()
-        w, h = self.top.winfo_width(), self.top.winfo_height()
-        x = (self.top.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.top.winfo_screenheight() // 2) - (h // 2)
-        self.top.geometry(f'{w}x{h}+{x}+{y}')
-
-    def toggle_spam_options(self):
-        state = "normal" if self.spam_enabled_var.get() else "disabled"
-        self.spam_key_btn.configure(state=state)
-        self.pre_entry.configure(state=state)
-        self.hold_entry.configure(state=state)
-        self.post_entry.configure(state=state)
-
-    def capture_toggle_key(self):
-        CaptureKeyDialogSimple(self.top, self, "toggle")
-
-    def capture_spam_key(self):
-        CaptureKeyDialogSimple(self.top, self, "spam")
-
-    def select_region(self):
-        self.top.withdraw()
-        self.top.after(200, lambda: SelectRegionDialogSimple(self.top.master, self))
-
-    def save(self):
-        name = self.name_entry.get().strip()
-        if not name:
-            messagebox.showwarning("Uyarı", "Grup adı boş olamaz!")
-            return
-
-        if not self.selected_key:
-            messagebox.showwarning("Uyarı", "Start/Stop tuşu seçmelisiniz!")
-            return
-
-        # Get spam timing
-        try:
-            pre = int(self.pre_entry.get()) if self.pre_entry.get() else 1
-            hold = int(self.hold_entry.get()) if self.hold_entry.get() else 1
-            post = int(self.post_entry.get()) if self.post_entry.get() else 1
-        except:
-            pre = hold = post = 1
-
-        self.group['name'] = name
-        self.group['toggle_key'] = self.selected_key
-        self.group['spam_key'] = self.spam_key
-        self.group['spam_enabled'] = self.spam_enabled_var.get()
-        self.group['spam_timing'] = {"pre_delay": pre, "hold_time": hold, "post_delay": post}
-        self.group['search_region'] = self.search_region
-        self.group['notes'] = self.notes_entry.get("1.0", "end-1c").strip()
-
-        self.manager.groups[self.index] = self.group
-        self.manager.refresh_group_list()
-        self.manager.update_group_details()
-        self.top.destroy()
-
-
-class CaptureKeyDialogSimple:
-    """Simple key capture dialog"""
-    def __init__(self, parent, caller, key_type):
-        self.caller = caller
-        self.key_type = key_type
-
-        self.top = ctk.CTkToplevel(parent)
-        self.top.title("Tuş Seç")
-        self.top.geometry("300x150")
-        self.top.transient(parent)
-        self.top.grab_set()
-        self.top.resizable(False, False)
-        self.top.after(10, self.center_window)
-
-        main = ctk.CTkFrame(self.top, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=20, pady=20)
-
-        ctk.CTkLabel(main, text="Bir tuşa basın...", font=ctk.CTkFont(size=14)).pack(pady=(0, 15))
-
-        self.key_label = ctk.CTkLabel(main, text="Bekleniyor...", font=ctk.CTkFont(size=18, weight="bold"),
-                                       text_color="#00d4ff")
-        self.key_label.pack(pady=(0, 15))
-
-        ctk.CTkButton(main, text="İptal", width=80, height=32, fg_color="#333333",
-                     command=self.cancel).pack()
-
-        keyboard.hook(self.on_key)
-
-    def center_window(self):
-        self.top.update_idletasks()
-        w, h = self.top.winfo_width(), self.top.winfo_height()
-        x = (self.top.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.top.winfo_screenheight() // 2) - (h // 2)
-        self.top.geometry(f'{w}x{h}+{x}+{y}')
-
-    def on_key(self, event):
-        if event.event_type == 'down':
-            key = event.name
-            keyboard.unhook_all()
-
-            if self.key_type == "toggle":
-                self.caller.selected_key = key
-                self.caller.key_btn.configure(text=key)
-            else:
-                self.caller.spam_key = key
-                self.caller.spam_key_btn.configure(text=key)
-
-            self.top.destroy()
-
-    def cancel(self):
-        keyboard.unhook_all()
-        self.top.destroy()
-
-
-class SelectRegionDialogSimple:
-    """Simple region selection dialog"""
-    def __init__(self, parent, caller):
-        self.caller = caller
-        self.screenshot = ImageGrab.grab()
-        self.width, self.height = self.screenshot.size
-
-        self.top = tk.Toplevel(parent)
-        self.top.title("Bölge Seç")
-        self.top.attributes('-fullscreen', True)
-        self.top.attributes('-topmost', True)
-        self.top.configure(cursor="crosshair")
-        self.top.focus_force()
-        self.top.grab_set()
-
-        self.canvas = tk.Canvas(self.top, highlightthickness=0, cursor="crosshair")
-        self.canvas.pack(fill=tk.BOTH, expand=True)
-
-        self.photo = ImageTk.PhotoImage(self.screenshot)
-        self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW)
-
-        self.rect = None
-        self.start_x = None
-        self.start_y = None
-
-        self.canvas.bind('<ButtonPress-1>', self.on_press)
-        self.canvas.bind('<B1-Motion>', self.on_drag)
-        self.canvas.bind('<ButtonRelease-1>', self.on_release)
-        self.canvas.bind('<Escape>', lambda e: self.cancel())
-        self.canvas.focus_set()
-
-        self.canvas.create_rectangle(self.width//2 - 150, 30, self.width//2 + 150, 60,
-                                     fill='black', stipple='gray50')
-        self.canvas.create_text(self.width//2, 45, text="Tıkla ve sürükle | ESC: İptal",
-                               font=('Arial', 12, 'bold'), fill='white')
-
-    def on_press(self, event):
-        self.start_x = event.x
-        self.start_y = event.y
-        if self.rect:
-            self.canvas.delete(self.rect)
-        self.rect = self.canvas.create_rectangle(self.start_x, self.start_y, self.start_x, self.start_y,
-                                                  outline='#00d4ff', width=3, dash=(5, 5))
-
-    def on_drag(self, event):
-        if self.rect:
-            self.canvas.coords(self.rect, self.start_x, self.start_y, event.x, event.y)
-
-    def on_release(self, event):
-        x1, y1 = min(self.start_x, event.x), min(self.start_y, event.y)
-        x2, y2 = max(self.start_x, event.x), max(self.start_y, event.y)
-
-        if x2 - x1 < 10 or y2 - y1 < 10:
-            return
-
-        self.caller.search_region = [x1, y1, x2, y2]
-        self.caller.region_label.configure(text=f"{x1},{y1} - {x2},{y2}")
-        self.top.destroy()
-        self.caller.top.deiconify()
-
-    def cancel(self):
-        self.top.destroy()
-        self.caller.top.deiconify()
-
-
-class AddTemplateDialog:
-    """Dialog for adding template to group"""
-    def __init__(self, parent, manager):
-        self.manager = manager
-        self.template_img = None
-        self.key_combo = None
-        self.selected_color = "#00ff88"
-
-        self.top = ctk.CTkToplevel(parent)
-        self.top.title("Template Ekle")
-        self.top.geometry("450x300")
-        self.top.transient(parent)
-        self.top.grab_set()
-        self.top.resizable(False, False)
-        self.top.after(10, self.center_window)
-
-        main = ctk.CTkFrame(self.top, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=30, pady=25)
-
-        ctk.CTkLabel(main, text="🎯 Template Ekle", font=ctk.CTkFont(size=20, weight="bold"),
-                    text_color="#00d4ff").pack(pady=(0, 20))
-
-        info = ctk.CTkFrame(main, fg_color="#1a1a1a", corner_radius=10)
-        info.pack(fill="x", pady=(0, 20))
-
-        for step in ["1️⃣  Ekran görüntüsü al", "2️⃣  Bölge seç", "3️⃣  Tuş ata"]:
-            ctk.CTkLabel(info, text=step, font=ctk.CTkFont(size=12)).pack(anchor="w", padx=15, pady=4)
-
-        btn_frame = ctk.CTkFrame(main, fg_color="transparent")
-        btn_frame.pack(fill="x")
-
-        ctk.CTkButton(btn_frame, text="▶ Başla", width=120, height=40, fg_color="#00ff88",
-                     hover_color="#00cc6e", text_color="#000000",
-                     font=ctk.CTkFont(weight="bold"), command=self.start_capture).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btn_frame, text="İptal", width=100, height=40, fg_color="#333333",
-                     command=self.top.destroy).pack(side="left")
-
-    def center_window(self):
-        self.top.update_idletasks()
-        w, h = self.top.winfo_width(), self.top.winfo_height()
-        x = (self.top.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.top.winfo_screenheight() // 2) - (h // 2)
-        self.top.geometry(f'{w}x{h}+{x}+{y}')
-
-    def start_capture(self):
-        self.top.withdraw()
-        self.top.after(200, self.do_capture)
-
-    def do_capture(self):
-        TemplateCapture(self.top.master, self)
-
-
-class TemplateCapture:
-    """Capture template from screen"""
-    def __init__(self, parent, add_dialog):
-        self.add_dialog = add_dialog
-        self.screenshot = ImageGrab.grab()
-        self.width, self.height = self.screenshot.size
-
-        self.top = tk.Toplevel(parent)
-        self.top.title("Bölge Seç")
-        self.top.attributes('-fullscreen', True)
-        self.top.attributes('-topmost', True)
-        self.top.configure(cursor="crosshair")
-        self.top.focus_force()
-        self.top.grab_set()
-
-        self.canvas = tk.Canvas(self.top, highlightthickness=0, cursor="crosshair")
-        self.canvas.pack(fill=tk.BOTH, expand=True)
-
-        self.photo = ImageTk.PhotoImage(self.screenshot)
-        self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW)
-
-        self.rect = None
-        self.start_x = None
-        self.start_y = None
-        self.is_selecting = False
-        self.overlay = None
-        self.coord_text = None
-
-        self.canvas.bind('<ButtonPress-1>', self.on_press)
-        self.canvas.bind('<B1-Motion>', self.on_drag)
-        self.canvas.bind('<ButtonRelease-1>', self.on_release)
-        self.canvas.bind('<Escape>', lambda e: self.cancel())
-        self.canvas.bind('<Motion>', self.on_motion)
-        self.canvas.focus_set()
-
-        # Talimatlar
-        self.canvas.create_rectangle(
-            self.width//2 - 180, 30, self.width//2 + 180, 70,
-            fill='black', stipple='gray50'
-        )
-        self.canvas.create_text(
-            self.width//2, 50,
-            text="Tıkla ve sürükle | ESC: İptal",
-            font=('Arial', 12, 'bold'), fill='white'
-        )
-
-    def on_motion(self, event):
-        if not self.is_selecting:
-            if self.coord_text:
-                self.canvas.delete(self.coord_text)
-            self.coord_text = self.canvas.create_text(
-                event.x + 15, event.y - 15,
-                text=f"X: {event.x}, Y: {event.y}",
-                fill='cyan', font=('Arial', 10, 'bold'), anchor=tk.NW
-            )
-
-    def on_press(self, event):
-        self.start_x = event.x
-        self.start_y = event.y
-        self.is_selecting = True
-
-        if self.rect:
-            self.canvas.delete(self.rect)
-        if self.overlay:
-            self.canvas.delete(self.overlay)
-        if self.coord_text:
-            self.canvas.delete(self.coord_text)
-
-        self.rect = self.canvas.create_rectangle(
-            self.start_x, self.start_y, self.start_x, self.start_y,
-            outline='#00d4ff', width=3, dash=(5, 5)
-        )
-        self.overlay = self.canvas.create_rectangle(
-            self.start_x, self.start_y, self.start_x, self.start_y,
-            fill='#00d4ff', stipple='gray25', outline=''
-        )
-
-    def on_drag(self, event):
-        if self.rect and self.is_selecting:
-            self.canvas.coords(self.rect, self.start_x, self.start_y, event.x, event.y)
-            if self.overlay:
-                self.canvas.coords(self.overlay, self.start_x, self.start_y, event.x, event.y)
-
-            width = abs(event.x - self.start_x)
-            height = abs(event.y - self.start_y)
-
-            if self.coord_text:
-                self.canvas.delete(self.coord_text)
-            self.coord_text = self.canvas.create_text(
-                event.x + 15, event.y - 15,
-                text=f"{width}x{height} px",
-                fill='cyan', font=('Arial', 12, 'bold'), anchor=tk.NW
-            )
-
-    def on_release(self, event):
-        self.is_selecting = False
-        x1, y1 = min(self.start_x, event.x), min(self.start_y, event.y)
-        x2, y2 = max(self.start_x, event.x), max(self.start_y, event.y)
-
-        if x2 - x1 < 10 or y2 - y1 < 10:
-            if self.rect:
-                self.canvas.delete(self.rect)
-            if self.overlay:
-                self.canvas.delete(self.overlay)
-            return
-
-        template_img = self.screenshot.crop((x1, y1, x2, y2))
-        self.top.destroy()
-        TemplateFinalizeDialog(self.top.master, self.add_dialog, template_img)
-
-    def cancel(self):
-        self.top.destroy()
-        self.add_dialog.top.deiconify()
-
-
-class TemplateFinalizeDialog:
-    """Finalize template with name and key"""
-    def __init__(self, parent, add_dialog, template_img):
-        self.add_dialog = add_dialog
-        self.manager = add_dialog.manager
-        self.template_img = template_img
-        self.key_combo = None
-        self.selected_color = "#00ff88"
-
-        self.top = ctk.CTkToplevel(parent)
-        self.top.title("Template Detayları")
-        self.top.geometry("450x480")
-        self.top.transient(parent)
-        self.top.grab_set()
-        self.top.resizable(False, False)
-        self.top.after(10, self.center_window)
-
-        main = ctk.CTkFrame(self.top, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=30, pady=20)
-
-        ctk.CTkLabel(main, text="✨ Template Detayları", font=ctk.CTkFont(size=18, weight="bold"),
-                    text_color="#00d4ff").pack(pady=(0, 15))
-
-        # Preview
-        preview_frame = ctk.CTkFrame(main, fg_color="#1a1a1a", corner_radius=10)
-        preview_frame.pack(pady=(0, 15))
-        try:
-            preview = template_img.copy()
-            preview.thumbnail((80, 80))
-            self.preview_photo = ctk.CTkImage(light_image=preview, dark_image=preview, size=preview.size)
-            ctk.CTkLabel(preview_frame, image=self.preview_photo, text="").pack(padx=15, pady=15)
-        except:
-            pass
-
-        # Name
-        name_row = ctk.CTkFrame(main, fg_color="transparent")
-        name_row.pack(fill="x", pady=5)
-        ctk.CTkLabel(name_row, text="İsim:", width=70).pack(side="left")
-        self.name_entry = ctk.CTkEntry(name_row, width=200, height=32)
-        self.name_entry.pack(side="left", padx=10)
-        self.name_entry.insert(0, f"template_{len(self.manager.groups[self.manager.selected_group_index].get('templates', [])) + 1}")
-
-        # Key combo
-        key_row = ctk.CTkFrame(main, fg_color="transparent")
-        key_row.pack(fill="x", pady=5)
-        ctk.CTkLabel(key_row, text="Tuş:", width=70).pack(side="left")
-        self.key_btn = ctk.CTkButton(key_row, text="Tuş Seç", width=120, height=32,
-                                      fg_color="#333333", command=self.capture_key)
-        self.key_btn.pack(side="left", padx=10)
-
-        # Threshold
-        thresh_row = ctk.CTkFrame(main, fg_color="transparent")
-        thresh_row.pack(fill="x", pady=5)
-        ctk.CTkLabel(thresh_row, text="Threshold:", width=70).pack(side="left")
-        self.threshold_slider = ctk.CTkSlider(thresh_row, from_=0.5, to=1.0, width=150)
-        self.threshold_slider.pack(side="left", padx=10)
-        self.threshold_slider.set(0.9)
-        self.thresh_label = ctk.CTkLabel(thresh_row, text="0.90", width=40)
-        self.thresh_label.pack(side="left")
-        self.threshold_slider.configure(command=lambda v: self.thresh_label.configure(text=f"{v:.2f}"))
-
-        # Color
-        color_row = ctk.CTkFrame(main, fg_color="transparent")
-        color_row.pack(fill="x", pady=5)
-        ctk.CTkLabel(color_row, text="Renk:", width=70).pack(side="left")
-        self.color_preview = ctk.CTkFrame(color_row, width=30, height=25, corner_radius=4, fg_color=self.selected_color)
-        self.color_preview.pack(side="left", padx=10)
-        ctk.CTkButton(color_row, text="Seç", width=50, height=25, fg_color="#333333",
-                     command=self.pick_color).pack(side="left")
-
-        # Timing
-        timing_row = ctk.CTkFrame(main, fg_color="transparent")
-        timing_row.pack(fill="x", pady=8)
-        ctk.CTkLabel(timing_row, text="Timing (ms):", width=70).pack(side="left")
-        self.pre_entry = ctk.CTkEntry(timing_row, width=45, height=28)
-        self.pre_entry.pack(side="left", padx=3)
-        self.pre_entry.insert(0, "1")
-        self.hold_entry = ctk.CTkEntry(timing_row, width=45, height=28)
-        self.hold_entry.pack(side="left", padx=3)
-        self.hold_entry.insert(0, "1")
-        self.post_entry = ctk.CTkEntry(timing_row, width=45, height=28)
-        self.post_entry.pack(side="left", padx=3)
-        self.post_entry.insert(0, "1")
-
-        # Buttons
-        btn_frame = ctk.CTkFrame(main, fg_color="transparent")
-        btn_frame.pack(fill="x", pady=(15, 0))
-
-        ctk.CTkButton(btn_frame, text="✓ Kaydet", width=120, height=40, fg_color="#00ff88",
-                     hover_color="#00cc6e", text_color="#000000",
-                     font=ctk.CTkFont(weight="bold"), command=self.save).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btn_frame, text="İptal", width=100, height=40, fg_color="#333333",
-                     command=self.cancel).pack(side="left")
-
-    def center_window(self):
-        self.top.update_idletasks()
-        w, h = self.top.winfo_width(), self.top.winfo_height()
-        x = (self.top.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.top.winfo_screenheight() // 2) - (h // 2)
-        self.top.geometry(f'{w}x{h}+{x}+{y}')
-
-    def capture_key(self):
-        CaptureKeyComboDialog(self.top, self)
-
-    def pick_color(self):
-        color = colorchooser.askcolor(initialcolor=self.selected_color)
-        if color[1]:
-            self.selected_color = color[1]
-            self.color_preview.configure(fg_color=self.selected_color)
-
-    def save(self):
-        name = self.name_entry.get().strip()
-        if not name:
-            messagebox.showwarning("Uyarı", "İsim boş olamaz!")
-            return
-
-        if not self.key_combo:
-            messagebox.showwarning("Uyarı", "Tuş atamalısınız!")
-            return
-
-        # Save image
-        filename = f"{name}.png"
-        filepath = IMAGES_FOLDER / filename
-        try:
-            self.template_img.save(filepath, 'PNG')
-        except Exception as e:
-            messagebox.showerror("Hata", f"Görsel kaydedilemedi: {e}")
-            return
-
-        # Get timing
-        try:
-            pre = int(self.pre_entry.get())
-            hold = int(self.hold_entry.get())
-            post = int(self.post_entry.get())
-        except:
-            pre = hold = post = 1
-
-        new_template = {
-            "name": name,
-            "file": filename,
-            "enabled": True,
-            "threshold": self.threshold_slider.get(),
-            "key_combo": self.key_combo,
-            "color": self.selected_color,
-            "timing": {"pre_delay": pre, "hold_time": hold, "post_delay": post},
-            "use_macro": False,
-            "macro": []
-        }
-
-        if 'templates' not in self.manager.groups[self.manager.selected_group_index]:
-            self.manager.groups[self.manager.selected_group_index]['templates'] = []
-
-        self.manager.groups[self.manager.selected_group_index]['templates'].append(new_template)
-        self.manager.refresh_template_list()
-
-        self.top.destroy()
-        self.add_dialog.top.destroy()
-
-    def cancel(self):
-        self.top.destroy()
-        self.add_dialog.top.deiconify()
-
-
-class CaptureKeyComboDialog:
-    """Capture key combination"""
-    def __init__(self, parent, caller):
-        self.caller = caller
-        self.captured_keys = []
-
-        self.top = ctk.CTkToplevel(parent)
-        self.top.title("Tuş Kombinasyonu")
-        self.top.geometry("350x180")
-        self.top.transient(parent)
-        self.top.grab_set()
-        self.top.resizable(False, False)
-        self.top.after(10, self.center_window)
-
-        main = ctk.CTkFrame(self.top, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=25, pady=20)
-
-        ctk.CTkLabel(main, text="Tuş kombinasyonunu basın:", font=ctk.CTkFont(size=13)).pack(pady=(0, 10))
-
-        self.key_label = ctk.CTkLabel(main, text="Bekleniyor...", font=ctk.CTkFont(size=18, weight="bold"),
-                                       text_color="#00d4ff")
-        self.key_label.pack(pady=(0, 15))
-
-        btn_frame = ctk.CTkFrame(main, fg_color="transparent")
-        btn_frame.pack()
-
-        self.ok_btn = ctk.CTkButton(btn_frame, text="Tamam", width=80, height=32, fg_color="#00ff88",
-                                    text_color="#000000", state="disabled", command=self.confirm)
-        self.ok_btn.pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btn_frame, text="İptal", width=80, height=32, fg_color="#333333",
-                     command=self.cancel).pack(side="left")
-
-        keyboard.hook(self.on_key)
-
-    def center_window(self):
-        self.top.update_idletasks()
-        w, h = self.top.winfo_width(), self.top.winfo_height()
-        x = (self.top.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.top.winfo_screenheight() // 2) - (h // 2)
-        self.top.geometry(f'{w}x{h}+{x}+{y}')
-
-    def on_key(self, event):
-        if event.event_type == 'down' and event.name not in self.captured_keys:
-            self.captured_keys.append(event.name)
-            combo = ' + '.join(self.captured_keys)
-            self.key_label.configure(text=combo)
-            self.ok_btn.configure(state="normal")
-
-    def confirm(self):
-        keyboard.unhook_all()
-        self.caller.key_combo = '+'.join(self.captured_keys)
-        self.caller.key_btn.configure(text=self.caller.key_combo)
-        self.top.destroy()
-
-    def cancel(self):
-        keyboard.unhook_all()
-        self.top.destroy()
-
-
-class EditTemplateDialog:
-    """Dialog for editing template"""
-    def __init__(self, parent, manager, template, index):
-        self.manager = manager
-        self.template = template
-        self.index = index
-        self.selected_color = template.get('color', '#00ff88')
-        self.key_combo = template.get('key_combo', '')
-        self.new_image = None
-        self.macro_list = template.get('macro', [])[:]  # Kopyala
-
-        self.top = ctk.CTkToplevel(parent)
-        self.top.title(f"Template Düzenle: {template['name']}")
-        self.top.geometry("500x700")
-        self.top.transient(parent)
-        self.top.grab_set()
-        self.top.resizable(False, False)
-        self.top.after(10, self.center_window)
-
-        # Scrollable main
-        main_scroll = ctk.CTkScrollableFrame(self.top, fg_color="transparent")
-        main_scroll.pack(fill="both", expand=True, padx=20, pady=15)
-
-        ctk.CTkLabel(main_scroll, text="✏️ Template Düzenle", font=ctk.CTkFont(size=18, weight="bold"),
-                    text_color="#00d4ff").pack(pady=(0, 15))
-
-        # Preview frame
-        preview_container = ctk.CTkFrame(main_scroll, fg_color="#1a1a1a", corner_radius=10)
-        preview_container.pack(fill="x", pady=(0, 10))
-        preview_content = ctk.CTkFrame(preview_container, fg_color="transparent")
-        preview_content.pack(fill="x", padx=15, pady=12)
-
-        self.preview_frame = ctk.CTkFrame(preview_content, fg_color="#0d0d0d", width=70, height=70, corner_radius=8)
-        self.preview_frame.pack(side="left")
-        self.preview_frame.pack_propagate(False)
-        self.preview_label = ctk.CTkLabel(self.preview_frame, text="")
-        self.preview_label.pack(expand=True)
-        self.load_preview()
-
-        ctk.CTkButton(preview_content, text="Yeni Görsel", width=100, height=30, fg_color="#333333",
-                     command=self.capture_new_image).pack(side="left", padx=15)
-
-        # Name
-        name_row = ctk.CTkFrame(main_scroll, fg_color="transparent")
-        name_row.pack(fill="x", pady=4)
-        ctk.CTkLabel(name_row, text="İsim:", width=80).pack(side="left")
-        self.name_entry = ctk.CTkEntry(name_row, width=180, height=30)
-        self.name_entry.pack(side="left", padx=5)
-        self.name_entry.insert(0, template['name'])
-
-        # Threshold & Color row
-        tc_row = ctk.CTkFrame(main_scroll, fg_color="transparent")
-        tc_row.pack(fill="x", pady=4)
-        ctk.CTkLabel(tc_row, text="Threshold:", width=80).pack(side="left")
-        self.threshold_slider = ctk.CTkSlider(tc_row, from_=0.5, to=1.0, width=120)
-        self.threshold_slider.pack(side="left", padx=5)
-        self.threshold_slider.set(template.get('threshold', 0.9))
-        self.thresh_label = ctk.CTkLabel(tc_row, text=f"{template.get('threshold', 0.9):.2f}", width=35)
-        self.thresh_label.pack(side="left")
-        self.threshold_slider.configure(command=lambda v: self.thresh_label.configure(text=f"{v:.2f}"))
-
-        self.color_preview = ctk.CTkFrame(tc_row, width=25, height=25, corner_radius=4, fg_color=self.selected_color)
-        self.color_preview.pack(side="left", padx=(15, 5))
-        ctk.CTkButton(tc_row, text="Renk", width=45, height=25, fg_color="#333333",
-                     command=self.pick_color).pack(side="left")
-
-        # ==================== MAKRO MODU ====================
-        macro_frame = ctk.CTkFrame(main_scroll, fg_color="#1a1a1a", corner_radius=10)
-        macro_frame.pack(fill="x", pady=10)
-
-        macro_header = ctk.CTkFrame(macro_frame, fg_color="transparent")
-        macro_header.pack(fill="x", padx=15, pady=(10, 5))
-
-        self.use_macro_var = ctk.BooleanVar(value=template.get('use_macro', False))
-        ctk.CTkCheckBox(macro_header, text="Gelişmiş Makro Kullan", variable=self.use_macro_var,
-                       fg_color="#00d4ff", command=self.toggle_macro_mode).pack(side="left")
-
-        # Basit mod frame
-        self.simple_frame = ctk.CTkFrame(macro_frame, fg_color="transparent")
-        self.simple_frame.pack(fill="x", padx=15, pady=10)
-
-        simple_row1 = ctk.CTkFrame(self.simple_frame, fg_color="transparent")
-        simple_row1.pack(fill="x", pady=3)
-        ctk.CTkLabel(simple_row1, text="Tuş:", width=60).pack(side="left")
-        self.key_btn = ctk.CTkButton(simple_row1, text=self.key_combo or "Tuş Seç", width=120, height=28,
-                                      fg_color="#333333", command=self.capture_key)
-        self.key_btn.pack(side="left", padx=5)
-
-        simple_row2 = ctk.CTkFrame(self.simple_frame, fg_color="transparent")
-        simple_row2.pack(fill="x", pady=3)
-        timing = template.get('timing', {"pre_delay": 1, "hold_time": 1, "post_delay": 1})
-        ctk.CTkLabel(simple_row2, text="Timing:", width=60).pack(side="left")
-        self.pre_entry = ctk.CTkEntry(simple_row2, width=45, height=26, placeholder_text="Önce")
-        self.pre_entry.pack(side="left", padx=2)
-        self.pre_entry.insert(0, str(timing.get('pre_delay', 1)))
-        self.hold_entry = ctk.CTkEntry(simple_row2, width=45, height=26, placeholder_text="Basılı")
-        self.hold_entry.pack(side="left", padx=2)
-        self.hold_entry.insert(0, str(timing.get('hold_time', 1)))
-        self.post_entry = ctk.CTkEntry(simple_row2, width=45, height=26, placeholder_text="Sonra")
-        self.post_entry.pack(side="left", padx=2)
-        self.post_entry.insert(0, str(timing.get('post_delay', 1)))
-        ctk.CTkLabel(simple_row2, text="ms", text_color="#666666").pack(side="left", padx=3)
-
-        # Makro mod frame
-        self.macro_frame = ctk.CTkFrame(macro_frame, fg_color="transparent")
-
-        # Record kontrolü
-        self.is_recording = False
-        self.record_start_time = 0
-        self.last_key_time = 0
-
-        # Record satırı
-        record_row = ctk.CTkFrame(self.macro_frame, fg_color="transparent")
-        record_row.pack(fill="x", pady=(0, 8))
-
-        self.record_btn = ctk.CTkButton(record_row, text="⏺ Kayıt Başlat", width=110, height=28,
-                                        fg_color="#aa2222", hover_color="#cc3333",
-                                        command=self.toggle_recording)
-        self.record_btn.pack(side="left", padx=2)
-
-        self.record_status = ctk.CTkLabel(record_row, text="", text_color="#ff6666",
-                                          font=ctk.CTkFont(size=11))
-        self.record_status.pack(side="left", padx=10)
-
-        ctk.CTkButton(record_row, text="Temizle", width=60, height=28, fg_color="#444444",
-                     command=self.clear_macro).pack(side="right", padx=2)
-
-        # Drag & drop state
-        self.drag_data = {"type": None, "index": None, "widget": None}
-        self.drop_indicator = None
-
-        # Manuel ekleme butonları (sürüklenebilir)
-        macro_btn_row = ctk.CTkFrame(self.macro_frame, fg_color="transparent")
-        macro_btn_row.pack(fill="x", pady=(0, 5))
-
-        # Draggable butonlar
-        btn_configs = [
-            ("+ Down", "key_down", "#2d5a27", 60),
-            ("+ Up", "key_up", "#5a2727", 50),
-            ("+ Press", "key_press", "#27455a", 55),
-            ("+ Sleep", "sleep", "#5a4a27", 55)
-        ]
-
-        for text, action_type, color, width in btn_configs:
-            btn = ctk.CTkButton(macro_btn_row, text=text, width=width, height=24, fg_color=color,
-                               font=ctk.CTkFont(size=10),
-                               command=lambda at=action_type: self.add_macro_action(at))
-            btn.pack(side="left", padx=2)
-            # Drag binding
-            btn.bind('<Button-1>', lambda e, at=action_type: self.start_drag_from_button(e, at))
-            btn.bind('<B1-Motion>', self.on_drag_motion)
-            btn.bind('<ButtonRelease-1>', self.on_drag_release)
-
-        # Makro listesi
-        self.macro_scroll = ctk.CTkScrollableFrame(self.macro_frame, fg_color="#0d0d0d", height=150)
-        self.macro_scroll.pack(fill="x", pady=5)
-
-        self.refresh_macro_list()
-
-        # Toggle başlangıç durumu
-        self.toggle_macro_mode()
-
-        # Enabled
-        self.enabled_var = ctk.BooleanVar(value=template.get('enabled', True))
-        ctk.CTkCheckBox(main_scroll, text="Aktif", variable=self.enabled_var,
-                       fg_color="#00d4ff").pack(anchor="w", pady=8)
-
-        # Buttons
-        btn_frame = ctk.CTkFrame(main_scroll, fg_color="transparent")
-        btn_frame.pack(fill="x", pady=(10, 0))
-        ctk.CTkButton(btn_frame, text="✓ Kaydet", width=120, height=38, fg_color="#00ff88",
-                     hover_color="#00cc6e", text_color="#000000",
-                     font=ctk.CTkFont(weight="bold"), command=self.save).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btn_frame, text="İptal", width=90, height=38, fg_color="#333333",
-                     command=self.top.destroy).pack(side="left")
-
-    def toggle_macro_mode(self):
-        """Basit/Makro mod arasında geçiş"""
-        if self.use_macro_var.get():
-            self.simple_frame.pack_forget()
-            self.macro_frame.pack(fill="x", padx=15, pady=10)
-        else:
-            self.macro_frame.pack_forget()
-            self.simple_frame.pack(fill="x", padx=15, pady=10)
-
-    def add_macro_action(self, action_type):
-        """Makroya yeni aksiyon ekle"""
-        if action_type == "sleep":
-            self.macro_list.append({"action": "sleep", "ms": 50})
-        else:
-            self.macro_list.append({"action": action_type, "key": ""})
-        self.refresh_macro_list()
-
-    def refresh_macro_list(self):
-        """Makro listesini yenile"""
-        for widget in self.macro_scroll.winfo_children():
-            widget.destroy()
-
-        for i, action in enumerate(self.macro_list):
-            row = ctk.CTkFrame(self.macro_scroll, fg_color="#1a1a1a", corner_radius=6, height=32)
-            row.pack(fill="x", pady=2, padx=2)
-            row.pack_propagate(False)
-            row.macro_index = i  # Index'i sakla
-
-            # Drag handle (sürükleme tutamacı)
-            handle = ctk.CTkLabel(row, text="≡", width=20, text_color="#666666",
-                                  font=ctk.CTkFont(size=14), cursor="hand2")
-            handle.pack(side="left", padx=(3, 0))
-            handle.bind('<Button-1>', lambda e, idx=i: self.start_drag_from_list(e, idx))
-            handle.bind('<B1-Motion>', self.on_drag_motion)
-            handle.bind('<ButtonRelease-1>', self.on_drag_release)
-
-            # Sıra numarası
-            ctk.CTkLabel(row, text=f"{i+1}.", width=20, text_color="#666666").pack(side="left", padx=2)
-
-            action_type = action.get('action', '')
-
-            # Aksiyon tipi badge
-            colors = {"key_down": "#2d5a27", "key_up": "#5a2727", "key_press": "#27455a", "sleep": "#5a4a27"}
-            labels = {"key_down": "↓ DOWN", "key_up": "↑ UP", "key_press": "⏎ PRESS", "sleep": "⏱ SLEEP"}
-
-            ctk.CTkLabel(row, text=labels.get(action_type, "?"), width=70,
-                        fg_color=colors.get(action_type, "#333"), corner_radius=4,
-                        font=ctk.CTkFont(size=10)).pack(side="left", padx=3)
-
-            if action_type == "sleep":
-                entry = ctk.CTkEntry(row, width=50, height=24)
-                entry.pack(side="left", padx=3)
-                entry.insert(0, str(action.get('ms', 50)))
-                entry.bind('<FocusOut>', lambda e, idx=i, ent=entry: self.update_macro_value(idx, 'ms', ent.get()))
-                ctk.CTkLabel(row, text="ms", text_color="#666666", width=25).pack(side="left")
-            else:
-                entry = ctk.CTkEntry(row, width=80, height=24, placeholder_text="tuş")
-                entry.pack(side="left", padx=3)
-                entry.insert(0, action.get('key', ''))
-                entry.bind('<FocusOut>', lambda e, idx=i, ent=entry: self.update_macro_value(idx, 'key', ent.get()))
-
-            # Sil butonu
-            ctk.CTkButton(row, text="×", width=24, height=24, fg_color="#ff4757",
-                         command=lambda idx=i: self.delete_macro_action(idx)).pack(side="right", padx=5)
-
-    def update_macro_value(self, idx, key, value):
-        """Makro değerini güncelle"""
-        if idx < len(self.macro_list):
-            if key == 'ms':
-                try:
-                    self.macro_list[idx][key] = int(value)
-                except:
-                    pass
-            else:
-                self.macro_list[idx][key] = value
-
-    def delete_macro_action(self, idx):
-        """Makro aksiyonunu sil"""
-        if idx < len(self.macro_list):
-            del self.macro_list[idx]
-            self.refresh_macro_list()
-
-    def toggle_recording(self):
-        """Kayıt başlat/durdur"""
-        if not self.is_recording:
-            # Kayıt başlat
-            self.is_recording = True
-            self.record_start_time = time.perf_counter()
-            self.last_key_time = self.record_start_time
-            self.record_btn.configure(text="⏹ Bitti", fg_color="#cc3333")
-            self.record_status.configure(text="⏺ Kayıt yapılıyor...")
-            # Keyboard hook'u ekle
-            self.keyboard_hook = keyboard.hook(self.on_record_key)
-        else:
-            # Kayıt durdur
-            self.is_recording = False
-            self.record_btn.configure(text="⏺ Kayıt Başlat", fg_color="#aa2222")
-            self.record_status.configure(text="")
-            # Keyboard hook'u kaldır
-            if hasattr(self, 'keyboard_hook') and self.keyboard_hook:
-                keyboard.unhook(self.keyboard_hook)
-                self.keyboard_hook = None
-            self.refresh_macro_list()
-
-    def on_record_key(self, event):
-        """Klavye olaylarını kaydet"""
-        if not self.is_recording:
-            return
-
-        current_time = time.perf_counter()
-
-        # Son olaydan bu yana geçen süreyi hesapla
-        elapsed_ms = int((current_time - self.last_key_time) * 1000)
-
-        # Eğer anlamlı bir bekleme süresi varsa (>5ms), sleep ekle
-        if elapsed_ms > 5:
-            self.macro_list.append({"action": "sleep", "ms": elapsed_ms})
-
-        # Tuş olayını ekle
-        key_name = event.name
-        if event.event_type == keyboard.KEY_DOWN:
-            self.macro_list.append({"action": "key_down", "key": key_name})
-        elif event.event_type == keyboard.KEY_UP:
-            self.macro_list.append({"action": "key_up", "key": key_name})
-
-        self.last_key_time = current_time
-
-        # UI'ı güncelle (thread-safe)
-        self.top.after(10, self.refresh_macro_list)
-
-    def clear_macro(self):
-        """Tüm makro aksiyonlarını temizle"""
-        self.macro_list = []
-        self.refresh_macro_list()
-
-    def start_drag_from_button(self, event, action_type):
-        """Butondan sürüklemeye başla"""
-        self.drag_data = {"type": "new", "action_type": action_type, "index": None}
-
-    def start_drag_from_list(self, event, index):
-        """Listeden sürüklemeye başla"""
-        self.drag_data = {"type": "reorder", "action_type": None, "index": index}
-
-    def on_drag_motion(self, event):
-        """Sürükleme hareketi"""
-        if not self.drag_data["type"]:
-            return
-
-        # Mouse pozisyonunu al (pencere koordinatlarında)
-        try:
-            x_root = event.widget.winfo_rootx() + event.x
-            y_root = event.widget.winfo_rooty() + event.y
-
-            # Scroll frame'in pozisyonunu al
-            scroll_x = self.macro_scroll.winfo_rootx()
-            scroll_y = self.macro_scroll.winfo_rooty()
-            scroll_height = self.macro_scroll.winfo_height()
-            scroll_width = self.macro_scroll.winfo_width()
-
-            # Mouse scroll frame içinde mi kontrol et
-            if (scroll_x <= x_root <= scroll_x + scroll_width and
-                scroll_y <= y_root <= scroll_y + scroll_height):
-
-                # Drop indicator göster
-                self.show_drop_indicator(y_root - scroll_y)
-            else:
-                self.hide_drop_indicator()
-        except:
-            pass
-
-    def on_drag_release(self, event):
-        """Sürükleme bırakıldı"""
-        if not self.drag_data["type"]:
-            return
-
-        try:
-            x_root = event.widget.winfo_rootx() + event.x
-            y_root = event.widget.winfo_rooty() + event.y
-
-            # Scroll frame'in pozisyonunu al
-            scroll_x = self.macro_scroll.winfo_rootx()
-            scroll_y = self.macro_scroll.winfo_rooty()
-            scroll_height = self.macro_scroll.winfo_height()
-            scroll_width = self.macro_scroll.winfo_width()
-
-            # Mouse scroll frame içinde mi kontrol et
-            if (scroll_x <= x_root <= scroll_x + scroll_width and
-                scroll_y <= y_root <= scroll_y + scroll_height):
-
-                # Hedef index'i hesapla
-                relative_y = y_root - scroll_y
-                target_idx = self.calculate_drop_index(relative_y)
-
-                if self.drag_data["type"] == "new":
-                    # Yeni aksiyon ekle
-                    action_type = self.drag_data["action_type"]
-                    if action_type == "sleep":
-                        new_action = {"action": "sleep", "ms": 50}
-                    else:
-                        new_action = {"action": action_type, "key": ""}
-                    self.macro_list.insert(target_idx, new_action)
-
-                elif self.drag_data["type"] == "reorder":
-                    # Mevcut aksiyonu taşı
-                    src_idx = self.drag_data["index"]
-                    if src_idx is not None and src_idx != target_idx:
-                        item = self.macro_list.pop(src_idx)
-                        # Eğer src < target ise, target'ı 1 azalt
-                        if src_idx < target_idx:
-                            target_idx -= 1
-                        self.macro_list.insert(target_idx, item)
-
-                self.refresh_macro_list()
-        except Exception as e:
-            print(f"Drag release error: {e}")
-
-        self.hide_drop_indicator()
-        self.drag_data = {"type": None, "action_type": None, "index": None}
-
-    def calculate_drop_index(self, relative_y):
-        """Mouse pozisyonuna göre drop index'i hesapla"""
-        children = self.macro_scroll.winfo_children()
-        if not children:
-            return 0
-
-        row_height = 36  # Yaklaşık satır yüksekliği (32 + padding)
-        idx = int(relative_y / row_height)
-        return min(max(0, idx), len(self.macro_list))
-
-    def show_drop_indicator(self, relative_y):
-        """Drop indicator çizgisini göster"""
-        try:
-            target_idx = self.calculate_drop_index(relative_y)
-            row_height = 36
-            indicator_y = target_idx * row_height
-
-            # Eğer indicator yoksa veya parent'ı yok olduysa yeniden oluştur
-            if self.drop_indicator is None or not self.drop_indicator.winfo_exists():
-                self.drop_indicator = ctk.CTkFrame(self.macro_scroll, fg_color="#00d4ff", height=2)
-
-            self.drop_indicator.place(x=0, y=indicator_y, relwidth=1)
-        except:
-            pass
-
-    def hide_drop_indicator(self):
-        """Drop indicator'ı gizle"""
-        if self.drop_indicator:
-            try:
-                if self.drop_indicator.winfo_exists():
-                    self.drop_indicator.place_forget()
-            except:
-                pass
-            self.drop_indicator = None
-
-    def load_preview(self):
-        """Mevcut template görselini yükle"""
-        try:
-            filepath = IMAGES_FOLDER / self.template['file']
-            if filepath.exists():
-                img = Image.open(filepath)
-                img.thumbnail((70, 70))
-                self.preview_photo = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
-                self.preview_label.configure(image=self.preview_photo)
-            else:
-                self.preview_label.configure(text="Görsel\nYok", text_color="#666666")
-        except Exception as e:
-            self.preview_label.configure(text="Hata", text_color="#ff4757")
-
-    def capture_new_image(self):
-        """Yeni görsel yakalamak için ekran yakalama başlat"""
-        self.top.withdraw()
-        self.top.after(200, self._do_capture)
-
-    def _do_capture(self):
-        """Ekran yakalama işlemini başlat"""
-        EditTemplateCapture(self.top.master, self)
-
-    def center_window(self):
-        self.top.update_idletasks()
-        w, h = self.top.winfo_width(), self.top.winfo_height()
-        x = (self.top.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.top.winfo_screenheight() // 2) - (h // 2)
-        self.top.geometry(f'{w}x{h}+{x}+{y}')
-
-    def capture_key(self):
-        CaptureKeyComboDialog(self.top, self)
-
-    def pick_color(self):
-        color = colorchooser.askcolor(initialcolor=self.selected_color)
-        if color[1]:
-            self.selected_color = color[1]
-            self.color_preview.configure(fg_color=self.selected_color)
-
-    def save(self):
-        name = self.name_entry.get().strip()
-        if not name:
-            messagebox.showwarning("Uyarı", "İsim boş olamaz!")
-            return
-
-        try:
-            pre = int(self.pre_entry.get())
-            hold = int(self.hold_entry.get())
-            post = int(self.post_entry.get())
-        except:
-            pre = hold = post = 1
-
-        # Yeni görsel varsa kaydet
-        if self.new_image is not None:
-            filename = f"{name}.png"
-            filepath = IMAGES_FOLDER / filename
-            try:
-                self.new_image.save(filepath, 'PNG')
-                self.template['file'] = filename
-            except Exception as e:
-                messagebox.showerror("Hata", f"Görsel kaydedilemedi: {e}")
-                return
-
-        self.template['name'] = name
-        self.template['key_combo'] = self.key_combo
-        self.template['threshold'] = self.threshold_slider.get()
-        self.template['color'] = self.selected_color
-        self.template['enabled'] = self.enabled_var.get()
-        self.template['timing'] = {"pre_delay": pre, "hold_time": hold, "post_delay": post}
-
-        # Makro bilgisi
-        self.template['use_macro'] = self.use_macro_var.get()
-        self.template['macro'] = self.macro_list
-
-        self.manager.groups[self.manager.selected_group_index]['templates'][self.index] = self.template
-        self.manager.refresh_template_list()
-        self.top.destroy()
-
-    def update_preview(self, new_img):
-        """Yeni yakalanan görseli önizlemeye yükle"""
-        self.new_image = new_img
-        try:
-            preview = new_img.copy()
-            preview.thumbnail((70, 70))
-            self.preview_photo = ctk.CTkImage(light_image=preview, dark_image=preview, size=preview.size)
-            self.preview_label.configure(image=self.preview_photo)
-        except:
-            pass
-
-
-class EditTemplateCapture:
-    """Capture new template image for editing"""
-    def __init__(self, parent, edit_dialog):
-        self.edit_dialog = edit_dialog
-        self.screenshot = ImageGrab.grab()
-        self.width, self.height = self.screenshot.size
-
-        self.top = tk.Toplevel(parent)
-        self.top.title("Bölge Seç")
-        self.top.attributes('-fullscreen', True)
-        self.top.attributes('-topmost', True)
-        self.top.configure(cursor="crosshair")
-        self.top.focus_force()
-        self.top.grab_set()
-
-        self.canvas = tk.Canvas(self.top, highlightthickness=0, cursor="crosshair")
-        self.canvas.pack(fill=tk.BOTH, expand=True)
-
-        self.photo = ImageTk.PhotoImage(self.screenshot)
-        self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW)
-
-        self.rect = None
-        self.start_x = None
-        self.start_y = None
-        self.is_selecting = False
-        self.overlay = None
-        self.coord_text = None
-
-        self.canvas.bind('<ButtonPress-1>', self.on_press)
-        self.canvas.bind('<B1-Motion>', self.on_drag)
-        self.canvas.bind('<ButtonRelease-1>', self.on_release)
-        self.canvas.bind('<Escape>', lambda e: self.cancel())
-        self.canvas.bind('<Motion>', self.on_motion)
-        self.canvas.focus_set()
-
-        # Talimatlar
-        self.canvas.create_rectangle(
-            self.width//2 - 200, 30, self.width//2 + 200, 70,
-            fill='black', stipple='gray50'
-        )
-        self.canvas.create_text(
-            self.width//2, 50,
-            text="Yeni görsel için bölge seç | ESC: İptal",
-            font=('Arial', 12, 'bold'), fill='white'
-        )
-
-    def on_motion(self, event):
-        if not self.is_selecting:
-            if self.coord_text:
-                self.canvas.delete(self.coord_text)
-            self.coord_text = self.canvas.create_text(
-                event.x + 15, event.y - 15,
-                text=f"X: {event.x}, Y: {event.y}",
-                fill='cyan', font=('Arial', 10, 'bold'), anchor=tk.NW
-            )
-
-    def on_press(self, event):
-        self.start_x = event.x
-        self.start_y = event.y
-        self.is_selecting = True
-
-        if self.rect:
-            self.canvas.delete(self.rect)
-        if self.overlay:
-            self.canvas.delete(self.overlay)
-        if self.coord_text:
-            self.canvas.delete(self.coord_text)
-
-        self.rect = self.canvas.create_rectangle(
-            self.start_x, self.start_y, self.start_x, self.start_y,
-            outline='#00d4ff', width=3, dash=(5, 5)
-        )
-        self.overlay = self.canvas.create_rectangle(
-            self.start_x, self.start_y, self.start_x, self.start_y,
-            fill='#00d4ff', stipple='gray25', outline=''
-        )
-
-    def on_drag(self, event):
-        if self.rect and self.is_selecting:
-            self.canvas.coords(self.rect, self.start_x, self.start_y, event.x, event.y)
-            if self.overlay:
-                self.canvas.coords(self.overlay, self.start_x, self.start_y, event.x, event.y)
-
-            width = abs(event.x - self.start_x)
-            height = abs(event.y - self.start_y)
-
-            if self.coord_text:
-                self.canvas.delete(self.coord_text)
-            self.coord_text = self.canvas.create_text(
-                event.x + 15, event.y - 15,
-                text=f"{width}x{height} px",
-                fill='cyan', font=('Arial', 12, 'bold'), anchor=tk.NW
-            )
-
-    def on_release(self, event):
-        self.is_selecting = False
-        x1, y1 = min(self.start_x, event.x), min(self.start_y, event.y)
-        x2, y2 = max(self.start_x, event.x), max(self.start_y, event.y)
-
-        if x2 - x1 < 10 or y2 - y1 < 10:
-            if self.rect:
-                self.canvas.delete(self.rect)
-            if self.overlay:
-                self.canvas.delete(self.overlay)
-            return
-
-        template_img = self.screenshot.crop((x1, y1, x2, y2))
-        self.top.destroy()
-
-        # Edit dialog'a yeni görseli gönder
-        self.edit_dialog.update_preview(template_img)
-        self.edit_dialog.top.deiconify()
-
-    def cancel(self):
-        self.top.destroy()
-        self.edit_dialog.top.deiconify()
-
-
-# ==================== MAIN ====================
-
-class ExportGroupDialog:
-    """Dialog for exporting a group as text"""
-    def __init__(self, parent, group):
-        self.group = group
-
-        self.top = ctk.CTkToplevel(parent)
-        self.top.title(f"Export: {group['name']}")
-        self.top.geometry("550x500")
-        self.top.transient(parent)
-        self.top.grab_set()
-        self.top.resizable(False, False)
-        self.top.after(10, self.center_window)
-
-        main = ctk.CTkFrame(self.top, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=20, pady=15)
-
-        ctk.CTkLabel(main, text="Export Grup", font=ctk.CTkFont(size=18, weight="bold"),
-                    text_color="#00d4ff").pack(pady=(0, 10))
-
-        ctk.CTkLabel(main, text="Bu kodu kopyalayıp paylaşabilirsiniz:",
-                    font=ctk.CTkFont(size=12), text_color="#888888").pack(anchor="w", pady=(0, 10))
-
-        # Export text area
-        self.export_text = ctk.CTkTextbox(main, width=500, height=350,
-                                          fg_color="#0d0d0d", corner_radius=8,
-                                          font=ctk.CTkFont(family="Consolas", size=11))
-        self.export_text.pack(fill="both", expand=True, pady=(0, 15))
-
-        # Generate export text
-        export_data = self.generate_export()
-        self.export_text.insert("1.0", export_data)
-
-        # Buttons
-        btn_frame = ctk.CTkFrame(main, fg_color="transparent")
-        btn_frame.pack(fill="x")
-
-        ctk.CTkButton(btn_frame, text="Kopyala", width=100, height=35, fg_color="#00ff88",
-                     hover_color="#00cc6e", text_color="#000000",
-                     font=ctk.CTkFont(weight="bold"), command=self.copy_to_clipboard).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btn_frame, text="Kapat", width=80, height=35, fg_color="#333333",
-                     hover_color="#444444", command=self.top.destroy).pack(side="left")
-
-    def center_window(self):
-        self.top.update_idletasks()
-        w, h = self.top.winfo_width(), self.top.winfo_height()
-        x = (self.top.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.top.winfo_screenheight() // 2) - (h // 2)
-        self.top.geometry(f'{w}x{h}+{x}+{y}')
-
-    def generate_export(self):
-        """Generate export text from group data"""
-        import base64
-
-        # Template'lerin resim dosyalarını base64 olarak encode et
-        group_copy = self.group.copy()
-        group_copy['id'] = str(uuid.uuid4())  # Yeni ID ver
-
-        templates_with_images = []
-        for template in group_copy.get('templates', []):
-            t_copy = template.copy()
-            # Resmi base64'e çevir
-            img_path = IMAGES_FOLDER / template.get('file', '')
-            if img_path.exists():
-                try:
-                    with open(img_path, 'rb') as f:
-                        img_data = base64.b64encode(f.read()).decode('utf-8')
-                    t_copy['image_data'] = img_data
-                except:
-                    t_copy['image_data'] = ''
-            templates_with_images.append(t_copy)
-
-        group_copy['templates'] = templates_with_images
-
-        # JSON'a çevir ve base64 encode et
-        json_str = json.dumps(group_copy, ensure_ascii=False)
-        encoded = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
-
-        # Kolay paylaşım için başlık ve bitiş ekle
-        export_str = f"===KLAD_MACRO_EXPORT_START===\n{encoded}\n===KLAD_MACRO_EXPORT_END==="
-        return export_str
-
-    def copy_to_clipboard(self):
-        """Copy export text to clipboard"""
-        text = self.export_text.get("1.0", "end-1c")
-        self.top.clipboard_clear()
-        self.top.clipboard_append(text)
-        messagebox.showinfo("Başarılı", "Export kodu panoya kopyalandı!")
-
-
-class ImportGroupDialog:
-    """Dialog for importing a group from text"""
-    def __init__(self, parent, manager):
-        self.manager = manager
-
-        self.top = ctk.CTkToplevel(parent)
-        self.top.title("Import Grup")
-        self.top.geometry("550x500")
-        self.top.transient(parent)
-        self.top.grab_set()
-        self.top.resizable(False, False)
-        self.top.after(10, self.center_window)
-
-        main = ctk.CTkFrame(self.top, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=20, pady=15)
-
-        ctk.CTkLabel(main, text="Import Grup", font=ctk.CTkFont(size=18, weight="bold"),
-                    text_color="#00d4ff").pack(pady=(0, 10))
-
-        ctk.CTkLabel(main, text="Export kodunu buraya yapıştırın:",
-                    font=ctk.CTkFont(size=12), text_color="#888888").pack(anchor="w", pady=(0, 10))
-
-        # Import text area
-        self.import_text = ctk.CTkTextbox(main, width=500, height=350,
-                                          fg_color="#0d0d0d", corner_radius=8,
-                                          font=ctk.CTkFont(family="Consolas", size=11))
-        self.import_text.pack(fill="both", expand=True, pady=(0, 15))
-
-        # Buttons
-        btn_frame = ctk.CTkFrame(main, fg_color="transparent")
-        btn_frame.pack(fill="x")
-
-        ctk.CTkButton(btn_frame, text="Import Et", width=100, height=35, fg_color="#00ff88",
-                     hover_color="#00cc6e", text_color="#000000",
-                     font=ctk.CTkFont(weight="bold"), command=self.do_import).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btn_frame, text="Yapıştır", width=80, height=35, fg_color="#5a4a27",
-                     hover_color="#7a6a47", command=self.paste_from_clipboard).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btn_frame, text="İptal", width=80, height=35, fg_color="#333333",
-                     hover_color="#444444", command=self.top.destroy).pack(side="left")
-
-    def center_window(self):
-        self.top.update_idletasks()
-        w, h = self.top.winfo_width(), self.top.winfo_height()
-        x = (self.top.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.top.winfo_screenheight() // 2) - (h // 2)
-        self.top.geometry(f'{w}x{h}+{x}+{y}')
-
-    def paste_from_clipboard(self):
-        """Paste from clipboard"""
-        try:
-            text = self.top.clipboard_get()
-            self.import_text.delete("1.0", "end")
-            self.import_text.insert("1.0", text)
-        except:
-            messagebox.showwarning("Uyarı", "Panoda metin yok!")
-
-    def do_import(self):
-        """Import group from text"""
-        import base64
-
-        text = self.import_text.get("1.0", "end-1c").strip()
-
-        # Extract encoded data
-        if "===KLAD_MACRO_EXPORT_START===" not in text or "===KLAD_MACRO_EXPORT_END===" not in text:
-            messagebox.showerror("Hata", "Geçersiz import kodu!\nExport kodunun tamamını yapıştırdığınızdan emin olun.")
-            return
-
-        try:
-            # Extract base64 data
-            start = text.find("===KLAD_MACRO_EXPORT_START===") + len("===KLAD_MACRO_EXPORT_START===")
-            end = text.find("===KLAD_MACRO_EXPORT_END===")
-            encoded = text[start:end].strip()
-
-            # Decode
-            json_str = base64.b64decode(encoded.encode('utf-8')).decode('utf-8')
-            group = json.loads(json_str)
-
-            # Yeni ID ata
-            group['id'] = str(uuid.uuid4())
-
-            # Template resimlerini kaydet
-            for template in group.get('templates', []):
-                if 'image_data' in template and template['image_data']:
-                    try:
-                        img_data = base64.b64decode(template['image_data'])
-                        # Yeni dosya adı oluştur
-                        new_filename = f"imported_{uuid.uuid4().hex[:8]}.png"
-                        img_path = IMAGES_FOLDER / new_filename
-                        with open(img_path, 'wb') as f:
-                            f.write(img_data)
-                        template['file'] = new_filename
-                    except Exception as e:
-                        print(f"Image import error: {e}")
-
-                    # image_data'yı temizle (artık gerekli değil)
-                    del template['image_data']
-
-            # Grubu ekle
-            self.manager.groups.append(group)
-            self.manager.refresh_group_list()
-            self.manager.add_log(f"Grup import edildi: {group['name']}", "INFO")
-
-            messagebox.showinfo("Başarılı", f"'{group['name']}' grubu başarıyla import edildi!")
-            self.top.destroy()
-
-        except Exception as e:
-            messagebox.showerror("Hata", f"Import başarısız: {str(e)}")
-
-
-class PresetDialog:
-    """Dialog for managing and importing presets"""
-    def __init__(self, parent, manager):
-        self.manager = manager
-        self.selected_preset_index = None
-
-        self.top = ctk.CTkToplevel(parent)
-        self.top.title("Presets")
-        self.top.geometry("700x550")
-        self.top.transient(parent)
-        self.top.grab_set()
-        self.top.resizable(False, False)
-        self.top.after(10, self.center_window)
-
-        main = ctk.CTkFrame(self.top, fg_color="transparent")
-        main.pack(fill="both", expand=True, padx=20, pady=15)
-
-        # Header
-        header = ctk.CTkFrame(main, fg_color="transparent")
-        header.pack(fill="x", pady=(0, 15))
-
-        ctk.CTkLabel(header, text="Presets", font=ctk.CTkFont(size=20, weight="bold"),
-                    text_color="#00d4ff").pack(side="left")
-
-        # Add preset button
-        ctk.CTkButton(header, text="+ Yeni Preset", width=120, height=32,
-                     fg_color="#4a3a6a", hover_color="#6a5a8a",
-                     font=ctk.CTkFont(weight="bold"),
-                     command=self.add_preset).pack(side="right")
-
-        # Content area - split view
-        content = ctk.CTkFrame(main, fg_color="transparent")
-        content.pack(fill="both", expand=True)
-
-        # Left panel - Preset list
-        left_panel = ctk.CTkFrame(content, fg_color="#1a1a1a", corner_radius=10, width=220)
-        left_panel.pack(side="left", fill="y", padx=(0, 10))
-        left_panel.pack_propagate(False)
-
-        ctk.CTkLabel(left_panel, text="Preset Listesi", font=ctk.CTkFont(size=12, weight="bold"),
-                    text_color="#888888").pack(pady=(15, 10), padx=15, anchor="w")
-
-        # Preset listbox frame
-        list_frame = ctk.CTkFrame(left_panel, fg_color="transparent")
-        list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-
-        self.preset_listbox = ctk.CTkScrollableFrame(list_frame, fg_color="#0d0d0d", corner_radius=8)
-        self.preset_listbox.pack(fill="both", expand=True)
-
-        # Right panel - Preset details
-        right_panel = ctk.CTkFrame(content, fg_color="#1a1a1a", corner_radius=10)
-        right_panel.pack(side="right", fill="both", expand=True)
-
-        self.details_frame = ctk.CTkFrame(right_panel, fg_color="transparent")
-        self.details_frame.pack(fill="both", expand=True, padx=20, pady=15)
-
-        # Placeholder
-        self.placeholder_label = ctk.CTkLabel(
-            self.details_frame,
-            text="Bir preset seçin veya yeni ekleyin",
-            font=ctk.CTkFont(size=14),
-            text_color="#666666"
-        )
-        self.placeholder_label.pack(expand=True)
-
-        # Detail widgets (hidden initially)
-        self.detail_widgets_frame = ctk.CTkFrame(self.details_frame, fg_color="transparent")
-
-        # Preset name
-        ctk.CTkLabel(self.detail_widgets_frame, text="Preset Adı:", font=ctk.CTkFont(size=12),
-                    text_color="#888888").pack(anchor="w")
-        self.name_entry = ctk.CTkEntry(self.detail_widgets_frame, height=35, fg_color="#0d0d0d",
-                                       font=ctk.CTkFont(size=13))
-        self.name_entry.pack(fill="x", pady=(5, 15))
-
-        # Info/description
-        ctk.CTkLabel(self.detail_widgets_frame, text="Açıklama:", font=ctk.CTkFont(size=12),
-                    text_color="#888888").pack(anchor="w")
-        self.info_text = ctk.CTkTextbox(self.detail_widgets_frame, height=60, fg_color="#0d0d0d",
-                                        font=ctk.CTkFont(size=12))
-        self.info_text.pack(fill="x", pady=(5, 15))
-
-        # Import code
-        ctk.CTkLabel(self.detail_widgets_frame, text="Import Kodu:", font=ctk.CTkFont(size=12),
-                    text_color="#888888").pack(anchor="w")
-        self.code_text = ctk.CTkTextbox(self.detail_widgets_frame, height=180, fg_color="#0d0d0d",
-                                        font=ctk.CTkFont(family="Consolas", size=11))
-        self.code_text.pack(fill="both", expand=True, pady=(5, 15))
-
-        # Buttons
-        btn_frame = ctk.CTkFrame(self.detail_widgets_frame, fg_color="transparent")
-        btn_frame.pack(fill="x")
-
-        ctk.CTkButton(btn_frame, text="Import Et", width=100, height=35,
-                     fg_color="#00ff88", hover_color="#00cc6e", text_color="#000000",
-                     font=ctk.CTkFont(weight="bold"),
-                     command=self.import_preset).pack(side="left", padx=(0, 10))
-
-        ctk.CTkButton(btn_frame, text="Kaydet", width=80, height=35,
-                     fg_color="#4a3a6a", hover_color="#6a5a8a",
-                     command=self.save_preset).pack(side="left", padx=(0, 10))
-
-        ctk.CTkButton(btn_frame, text="Sil", width=60, height=35,
-                     fg_color="#8B0000", hover_color="#a52a2a",
-                     command=self.delete_preset).pack(side="left")
-
-        # Bottom close button
-        ctk.CTkButton(main, text="Kapat", width=100, height=35,
-                     fg_color="#333333", hover_color="#444444",
-                     command=self.top.destroy).pack(pady=(15, 0))
-
-        self.refresh_preset_list()
-
-    def center_window(self):
-        self.top.update_idletasks()
-        w, h = self.top.winfo_width(), self.top.winfo_height()
-        x = (self.top.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.top.winfo_screenheight() // 2) - (h // 2)
-        self.top.geometry(f'{w}x{h}+{x}+{y}')
-
-    def refresh_preset_list(self):
-        """Refresh the preset list"""
-        for widget in self.preset_listbox.winfo_children():
-            widget.destroy()
-
-        for i, preset in enumerate(self.manager.presets):
-            btn = ctk.CTkButton(
-                self.preset_listbox,
-                text=preset.get('name', 'Unnamed'),
-                height=36,
-                corner_radius=6,
-                fg_color="#2a2a2a" if i != self.selected_preset_index else "#4a3a6a",
-                hover_color="#3a3a3a",
-                anchor="w",
-                font=ctk.CTkFont(size=12),
-                command=lambda idx=i: self.select_preset(idx)
-            )
-            btn.pack(fill="x", pady=2)
-
-    def select_preset(self, index):
-        """Select a preset and show details"""
-        self.selected_preset_index = index
-        self.refresh_preset_list()
-
-        # Show detail widgets
-        self.placeholder_label.pack_forget()
-        self.detail_widgets_frame.pack(fill="both", expand=True)
-
-        # Load preset data
-        preset = self.manager.presets[index]
-        self.name_entry.delete(0, "end")
-        self.name_entry.insert(0, preset.get('name', ''))
-
-        self.info_text.delete("1.0", "end")
-        self.info_text.insert("1.0", preset.get('info', ''))
-
-        self.code_text.delete("1.0", "end")
-        self.code_text.insert("1.0", preset.get('import_code', ''))
-
-    def add_preset(self):
-        """Add a new preset"""
-        new_preset = {
-            "name": f"Yeni Preset {len(self.manager.presets) + 1}",
-            "info": "",
-            "import_code": ""
-        }
-        self.manager.presets.append(new_preset)
-        self.manager.save_config(silent=True)
-        self.refresh_preset_list()
-        self.select_preset(len(self.manager.presets) - 1)
-
-    def save_preset(self):
-        """Save current preset"""
-        if self.selected_preset_index is None:
-            return
-
-        preset = self.manager.presets[self.selected_preset_index]
-        preset['name'] = self.name_entry.get().strip() or "Unnamed"
-        preset['info'] = self.info_text.get("1.0", "end-1c").strip()
-        preset['import_code'] = self.code_text.get("1.0", "end-1c").strip()
-
-        self.manager.save_config(silent=True)
-        self.refresh_preset_list()
-        messagebox.showinfo("Başarılı", "Preset kaydedildi!")
-
-    def delete_preset(self):
-        """Delete selected preset"""
-        if self.selected_preset_index is None:
-            return
-
-        preset = self.manager.presets[self.selected_preset_index]
-        if messagebox.askyesno("Onayla", f"'{preset.get('name', 'Preset')}' silinsin mi?"):
-            self.manager.presets.pop(self.selected_preset_index)
-            self.selected_preset_index = None
-            self.manager.save_config(silent=True)
-            self.refresh_preset_list()
-
-            # Hide details
-            self.detail_widgets_frame.pack_forget()
-            self.placeholder_label.pack(expand=True)
-
-    def import_preset(self):
-        """Import the preset's group"""
-        if self.selected_preset_index is None:
-            return
-
-        preset = self.manager.presets[self.selected_preset_index]
-        import_code = preset.get('import_code', '').strip()
-
-        if not import_code:
-            messagebox.showwarning("Uyarı", "Bu preset'in import kodu boş!")
-            return
-
-        # Import işlemini yap (ImportGroupDialog'daki mantığı kullan)
-        import base64
-
-        if "===KLAD_MACRO_EXPORT_START===" not in import_code or "===KLAD_MACRO_EXPORT_END===" not in import_code:
-            messagebox.showerror("Hata", "Geçersiz import kodu!")
-            return
-
-        try:
-            start = import_code.find("===KLAD_MACRO_EXPORT_START===") + len("===KLAD_MACRO_EXPORT_START===")
-            end = import_code.find("===KLAD_MACRO_EXPORT_END===")
-            encoded = import_code[start:end].strip()
-
-            json_str = base64.b64decode(encoded.encode('utf-8')).decode('utf-8')
-            group = json.loads(json_str)
-
-            # Yeni ID ata
-            group['id'] = str(uuid.uuid4())
-
-            # Template resimlerini kaydet
-            for template in group.get('templates', []):
-                if 'image_data' in template and template['image_data']:
-                    try:
-                        img_data = base64.b64decode(template['image_data'])
-                        new_filename = f"imported_{uuid.uuid4().hex[:8]}.png"
-                        img_path = IMAGES_FOLDER / new_filename
-                        with open(img_path, 'wb') as f:
-                            f.write(img_data)
-                        template['file'] = new_filename
-                    except Exception as e:
-                        print(f"Image import error: {e}")
-                    del template['image_data']
-
-            # Grubu ekle
-            self.manager.groups.append(group)
-            self.manager.refresh_group_list()
-            self.manager.add_log(f"Preset'ten grup import edildi: {group['name']}", "INFO")
-
-            messagebox.showinfo("Başarılı", f"'{group['name']}' grubu preset'ten import edildi!")
-
-        except Exception as e:
-            messagebox.showerror("Hata", f"Import başarısız: {str(e)}")
-
 
 def main():
     # Required for Windows multiprocessing

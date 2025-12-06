@@ -153,3 +153,29 @@ def get_current_version():
 def get_current_commit():
     """Mevcut commit hash'i döndür (kısa)"""
     return COMMIT_HASH[:7]
+
+
+def restart_application():
+    """Uygulamayı yeniden başlat"""
+    import subprocess
+
+    # Ana script'in yolunu bul
+    main_script = Path(__file__).parent.parent / "klad_macro_tool.py"
+
+    # Yeni process başlat
+    if sys.platform == "win32":
+        # Windows'ta pythonw kullanarak konsol olmadan başlat
+        subprocess.Popen(
+            [sys.executable, str(main_script)],
+            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+            close_fds=True
+        )
+    else:
+        subprocess.Popen(
+            [sys.executable, str(main_script)],
+            start_new_session=True,
+            close_fds=True
+        )
+
+    # Mevcut uygulamayı kapat
+    os._exit(0)

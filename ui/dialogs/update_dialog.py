@@ -217,12 +217,16 @@ class UpdateDialog(ctk.CTkToplevel):
             self.progress_label.configure(text=f"İndiriliyor... {mb_downloaded:.1f} / {mb_total:.1f} MB")
 
     def show_restart_dialog(self):
-        """Başarılı güncelleme sonrası yeniden başlatma dialogu"""
-        self.destroy()
-        messagebox.showinfo(
-            "Güncelleme Tamamlandı",
-            "Güncelleme başarıyla kuruldu!\n\nDeğişikliklerin geçerli olması için uygulamayı yeniden başlatın."
-        )
+        """Başarılı güncelleme sonrası otomatik yeniden başlat"""
+        self.progress_label.configure(text="Yeniden başlatılıyor...")
+        self.update()
+
+        # 1 saniye bekle ve yeniden başlat
+        self.after(1000, self.do_restart)
+
+    def do_restart(self):
+        """Uygulamayı yeniden başlat"""
+        self.updater.restart_application()
 
     def show_error(self, message):
         """Hata mesajı göster"""

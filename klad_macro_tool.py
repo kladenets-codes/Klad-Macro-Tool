@@ -15,10 +15,6 @@ if sys.platform == "win32":
     if hwnd:
         user32.ShowWindow(hwnd, 0)  # SW_HIDE = 0
 
-    # Multiprocessing için konsol açılmasını engelle
-    import multiprocessing
-    multiprocessing.set_start_method('spawn', force=True)
-
 import customtkinter as ctk
 from tkinter import messagebox
 import tkinter as tk

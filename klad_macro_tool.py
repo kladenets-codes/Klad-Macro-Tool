@@ -1573,7 +1573,8 @@ Kullanım:
 
                         if template_path.exists():
                             try:
-                                template_img = cv2.imread(str(template_path), cv2.IMREAD_GRAYSCALE)
+                                # UTF-8 path desteği için numpy ile oku
+                                template_img = cv2.imdecode(np.fromfile(str(template_path), dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
                                 if template_img is not None:
                                     # Template screenshot'tan büyükse atla
                                     if template_img.shape[0] > screenshot_gray.shape[0] or template_img.shape[1] > screenshot_gray.shape[1]:

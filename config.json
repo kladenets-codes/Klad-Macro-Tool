@@ -355,7 +355,7 @@
     {
       "id": "291a0fb4-90b9-439e-8c2f-363540d1a075",
       "name": "warlock",
-      "enabled": true,
+      "enabled": false,
       "toggle_key": "num lock",
       "spam_key": "\"",
       "spam_enabled": true,
@@ -374,6 +374,60 @@
       "cycle_delay": 0.01,
       "notes": "",
       "templates": []
+    },
+    {
+      "id": "c562fa28-dd93-464c-b39d-f36d1bdf9fd4",
+      "name": "hunter",
+      "enabled": true,
+      "toggle_key": "num lock",
+      "spam_key": "\"",
+      "spam_enabled": true,
+      "spam_timing": {
+        "pre_delay": 1,
+        "hold_time": 1,
+        "post_delay": 1
+      },
+      "spam_key_interval": 0.025,
+      "search_region": [
+        793,
+        622,
+        1159,
+        885
+      ],
+      "cycle_delay": 0.01,
+      "notes": "",
+      "templates": [
+        {
+          "name": "X Beastial Wrath",
+          "file": "X Beastial Wrath.png",
+          "enabled": true,
+          "threshold": 0.9,
+          "key_combo": "x",
+          "color": "#00ff88",
+          "timing": {
+            "pre_delay": 1,
+            "hold_time": 1,
+            "post_delay": 1
+          },
+          "use_macro": false,
+          "macro": []
+        },
+        {
+          "name": "interrujpt",
+          "file": "interrujpt.png",
+          "enabled": true,
+          "threshold": 0.9,
+          "key_combo": "t",
+          "color": "#00ff88",
+          "timing": {
+            "pre_delay": 1,
+            "hold_time": 1,
+            "post_delay": 1
+          },
+          "use_macro": false,
+          "macro": []
+        }
+      ]
     }
   ],
   "global_settings": {

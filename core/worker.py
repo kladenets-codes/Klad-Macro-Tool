@@ -224,7 +224,8 @@ def _load_templates(group_data: Dict[str, Any]) -> List[Dict[str, Any]]:
 
         template_path = IMAGES_FOLDER / template['file']
         if template_path.exists():
-            img = cv2.imread(str(template_path), cv2.IMREAD_COLOR)
+            # UTF-8 path desteği için numpy ile oku
+            img = cv2.imdecode(np.fromfile(str(template_path), dtype=np.uint8), cv2.IMREAD_COLOR)
             if img is not None:
                 # Convert to grayscale (3x faster matching)
                 img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)

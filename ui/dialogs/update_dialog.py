@@ -199,6 +199,10 @@ class UpdateDialog(ctk.CTkToplevel):
                 success = self.updater.extract_and_install(zip_path)
 
                 if success:
+                    # version.txt'yi yeni commit hash ile güncelle
+                    new_commit = self.commit_info.get("sha", "")
+                    self.updater.update_version_file(new_commit)
+
                     self.after(0, self.show_restart_dialog)
                 else:
                     self.after(0, lambda: self.show_error("Kurulum başarısız oldu!"))

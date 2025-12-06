@@ -3,9 +3,22 @@ Klad Macro Tool - Constants
 All magic numbers and configuration values in one place
 """
 
-# Version info
-VERSION = "3.1.0"
-COMMIT_HASH = "41c44963f6531d1bcf99b163eebd5738ea1fc129"
+from pathlib import Path
+
+# Version info - version.txt'den oku
+def _load_version():
+    """version.txt dosyasından versiyon bilgisini oku"""
+    version_file = Path(__file__).parent.parent / "version.txt"
+    try:
+        with open(version_file, 'r', encoding='utf-8') as f:
+            lines = f.read().strip().split('\n')
+            version = lines[0].strip() if len(lines) > 0 else "0.0.0"
+            commit = lines[1].strip() if len(lines) > 1 else "unknown"
+            return version, commit
+    except:
+        return "0.0.0", "unknown"
+
+VERSION, COMMIT_HASH = _load_version()
 GITHUB_REPO = "kladenets-codes/Klad-Macro-Tool"
 
 # Timing constants (milliseconds)

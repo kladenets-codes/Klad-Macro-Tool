@@ -139,6 +139,30 @@ def extract_and_install(zip_path, target_dir=None):
         return False
 
 
+def update_version_file(new_commit_hash, target_dir=None):
+    """
+    version.txt dosyasını yeni commit hash ile güncelle.
+    Versiyon numarası aynı kalır, sadece commit hash güncellenir.
+    """
+    try:
+        if target_dir is None:
+            target_dir = Path(__file__).parent.parent
+
+        version_file = target_dir / "version.txt"
+
+        # Mevcut versiyonu oku
+        current_version = VERSION
+
+        # Yeni içeriği yaz
+        with open(version_file, 'w', encoding='utf-8') as f:
+            f.write(f"{current_version}\n{new_commit_hash}\n")
+
+        return True
+    except Exception as e:
+        print(f"Version file update error: {e}")
+        return False
+
+
 def open_github_page():
     """GitHub repo sayfasını tarayıcıda aç"""
     import webbrowser

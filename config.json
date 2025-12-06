@@ -181,7 +181,7 @@
     {
       "id": "d45bd7f5-965a-4019-8e70-fecd58359bab",
       "name": "prot pala",
-      "enabled": false,
+      "enabled": true,
       "toggle_key": "num lock",
       "spam_key": "\"",
       "spam_enabled": true,
@@ -378,7 +378,7 @@
     {
       "id": "c562fa28-dd93-464c-b39d-f36d1bdf9fd4",
       "name": "hunter",
-      "enabled": true,
+      "enabled": false,
       "toggle_key": "num lock",
       "spam_key": "\"",
       "spam_enabled": true,

@@ -3,6 +3,16 @@ Klad Macro Tool - Worker Process
 Independent worker process for each group's template matching
 """
 
+# Windows'ta worker process için konsol gizle
+import sys
+if sys.platform == "win32":
+    import ctypes
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    user32 = ctypes.WinDLL('user32', use_last_error=True)
+    hwnd = kernel32.GetConsoleWindow()
+    if hwnd:
+        user32.ShowWindow(hwnd, 0)
+
 import cv2
 import numpy as np
 import time

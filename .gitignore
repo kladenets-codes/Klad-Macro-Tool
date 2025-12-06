@@ -6,6 +6,7 @@ IMPROVEMENT_TODO.md
 
 # Node modules
 node_modules/
+config.json
 
 # Local data
 images/

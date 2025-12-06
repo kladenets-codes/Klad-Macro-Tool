@@ -10,6 +10,11 @@ This module contains the core functionality:
 """
 
 from .constants import (
+    # Version
+    VERSION,
+    COMMIT_HASH,
+    GITHUB_REPO,
+
     # Timing
     STATUS_CHECK_INTERVAL_MS,
     TEST_CYCLE_INTERVAL_MS,
@@ -63,6 +68,10 @@ from .export_import import (
 )
 
 __all__ = [
+    # Version
+    'VERSION',
+    'COMMIT_HASH',
+    'GITHUB_REPO',
     # Constants
     'STATUS_CHECK_INTERVAL_MS',
     'TEST_CYCLE_INTERVAL_MS',

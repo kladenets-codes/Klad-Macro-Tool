@@ -3,6 +3,11 @@ Klad Macro Tool - Constants
 All magic numbers and configuration values in one place
 """
 
+# Version info
+VERSION = "3.1.0"
+COMMIT_HASH = "41c44963f6531d1bcf99b163eebd5738ea1fc129"
+GITHUB_REPO = "kladenets-codes/Klad-Macro-Tool"
+
 # Timing constants (milliseconds)
 STATUS_CHECK_INTERVAL_MS = 50
 TEST_CYCLE_INTERVAL_MS = 100

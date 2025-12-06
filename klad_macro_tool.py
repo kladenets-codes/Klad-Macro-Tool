@@ -3,6 +3,18 @@ Klad Macro Tool
 Groups System with Multiprocessing
 """
 
+# Windows'ta konsol penceresini gizle
+import sys
+import os
+if sys.platform == "win32":
+    import ctypes
+    # Konsol penceresini gizle (GUI uygulaması olarak çalış)
+    kernel32 = ctypes.WinDLL('kernel32')
+    user32 = ctypes.WinDLL('user32')
+    hwnd = kernel32.GetConsoleWindow()
+    if hwnd:
+        user32.ShowWindow(hwnd, 0)  # SW_HIDE = 0
+
 import customtkinter as ctk
 from tkinter import messagebox
 import tkinter as tk
@@ -18,6 +30,9 @@ import copy
 
 # Core module imports
 from core import (
+    # Version
+    VERSION,
+    COMMIT_HASH,
     # Constants
     COLORS,
     LOG_COLORS,
@@ -138,6 +153,9 @@ class ConfigManager:
         # Start status monitor
         self.root.after(100, self.check_status_queue)
 
+        # Güncelleme kontrolü (arka planda)
+        self.root.after(1000, self.check_for_updates)
+
     def build_ui(self):
         """Build the modern UI with groups tab system"""
         self.root.configure(fg_color=self.colors["bg_dark"])
@@ -157,7 +175,7 @@ class ConfigManager:
 
         ctk.CTkLabel(
             header_frame,
-            text="v3.0 Groups",
+            text=f"v{VERSION} ({COMMIT_HASH[:7]})",
             font=ctk.CTkFont(size=12),
             text_color=self.colors["text_secondary"]
         ).pack(side="left", padx=5, pady=15)
@@ -2012,6 +2030,11 @@ Kullanım:
                 messagebox.showerror("Hata", "Config kaydedilemedi!")
         except Exception as e:
             messagebox.showerror("Hata", f"Config kaydedilemedi: {e}")
+
+    def check_for_updates(self):
+        """Arka planda güncelleme kontrolü yap"""
+        from ui.dialogs.update_dialog import show_update_dialog_if_available
+        show_update_dialog_if_available(self.root, check_async=True)
 
     def on_close(self):
         """Handle window close"""

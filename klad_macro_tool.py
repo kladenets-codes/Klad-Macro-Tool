@@ -91,20 +91,8 @@ class ConfigManager:
         self.root.geometry("1100x800")
         self.root.minsize(950, 700)
 
-        # Renk paleti
-        self.colors = {
-            "bg_dark": "#0d0d0d",
-            "bg_secondary": "#1a1a1a",
-            "bg_card": "#242424",
-            "accent": "#00d4ff",
-            "accent_hover": "#00a8cc",
-            "success": "#00ff88",
-            "danger": "#ff4757",
-            "warning": "#ffa502",
-            "text": "#ffffff",
-            "text_secondary": "#888888",
-            "border": "#333333"
-        }
+        # Renk paleti (core/constants.py'den)
+        self.colors = COLORS
 
         # Groups data
         self.groups = []
@@ -1318,7 +1306,6 @@ Kullanım:
         original = self.groups[self.selected_group_index]['templates'][self.selected_template_index]
 
         # Deep copy the template
-        import copy
         new_template = copy.deepcopy(original)
 
         # Generate new name

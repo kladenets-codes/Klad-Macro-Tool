@@ -10,6 +10,8 @@ from PIL import ImageTk, ImageGrab
 import keyboard
 import uuid
 
+from core.keyboard_utils import get_physical_key_name
+
 
 class AddGroupDialog:
     """Dialog for adding new group"""
@@ -139,8 +141,10 @@ class AddGroupDialog:
         CaptureKeyDialogSimple(self.top, self, "spam")
 
     def select_region(self):
+        # Ana pencereyi ve dialog'u gizle
+        self.manager.root.withdraw()
         self.top.withdraw()
-        self.top.after(200, lambda: SelectRegionDialogSimple(self.top.master, self))
+        self.top.after(300, lambda: SelectRegionDialogSimple(self.top.master, self))
 
     def save(self):
         name = self.name_entry.get().strip()
@@ -317,8 +321,10 @@ class EditGroupDialog:
         CaptureKeyDialogSimple(self.top, self, "spam")
 
     def select_region(self):
+        # Ana pencereyi ve dialog'u gizle
+        self.manager.root.withdraw()
         self.top.withdraw()
-        self.top.after(200, lambda: SelectRegionDialogSimple(self.top.master, self))
+        self.top.after(300, lambda: SelectRegionDialogSimple(self.top.master, self))
 
     def save(self):
         name = self.name_entry.get().strip()
@@ -398,7 +404,7 @@ class CaptureKeyDialogSimple:
 
     def on_key(self, event):
         if event.event_type == 'down':
-            key = self._get_physical_key_name(event)
+            key = get_physical_key_name(event)
             self.selected_key = key
             self.key_label.configure(text=key)
             self.ok_btn.configure(state="normal")
@@ -419,75 +425,6 @@ class CaptureKeyDialogSimple:
                 self.caller.spam_key = self.selected_key
                 self.caller.spam_key_btn.configure(text=self.selected_key)
         self.top.destroy()
-
-    def _get_physical_key_name(self, event):
-        """Fiziksel tuş adını döndür (shift ile değişen karakterleri önle)"""
-        # Modifier tuşları direkt kullan
-        modifiers = {'shift', 'ctrl', 'alt', 'left shift', 'right shift',
-                     'left ctrl', 'right ctrl', 'left alt', 'right alt',
-                     'left windows', 'right windows'}
-        if event.name.lower() in modifiers:
-            return event.name.lower()
-
-        # Scan code ile fiziksel tuşu bul
-        scan_code = event.scan_code
-
-        # Bilinen scan code -> tuş eşleştirmesi
-        scan_code_map = {
-            # Sayı satırı (Türkçe Q klavye) - 41: " tuşu (Esc altında)
-            41: '"', 2: '1', 3: '2', 4: '3', 5: '4', 6: '5',
-            7: '6', 8: '7', 9: '8', 10: '9', 11: '0', 12: '*', 13: '-',
-            # Harf satırları
-            16: 'q', 17: 'w', 18: 'e', 19: 'r', 20: 't', 21: 'y',
-            22: 'u', 23: 'i', 24: 'o', 25: 'p', 26: 'ğ', 27: 'ü',
-            30: 'a', 31: 's', 32: 'd', 33: 'f', 34: 'g', 35: 'h',
-            36: 'j', 37: 'k', 38: 'l', 39: 'ş', 40: 'i', 43: ',',
-            44: 'z', 45: 'x', 46: 'c', 47: 'v', 48: 'b', 49: 'n',
-            50: 'm', 51: 'ö', 52: 'ç', 53: '.',
-            # Özel tuşlar
-            14: 'backspace', 15: 'tab', 28: 'enter', 57: 'space',
-            58: 'caps lock', 1: 'esc',
-            # F tuşları
-            59: 'f1', 60: 'f2', 61: 'f3', 62: 'f4', 63: 'f5', 64: 'f6',
-            65: 'f7', 66: 'f8', 67: 'f9', 68: 'f10', 87: 'f11', 88: 'f12',
-            # Numpad
-            69: 'num lock', 71: 'num 7', 72: 'num 8', 73: 'num 9', 74: 'num -',
-            75: 'num 4', 76: 'num 5', 77: 'num 6', 78: 'num +',
-            79: 'num 1', 80: 'num 2', 81: 'num 3', 82: 'num 0', 83: 'num .',
-            # Ok tuşları ve diğerleri (extended scan codes)
-            328: 'up', 336: 'down', 331: 'left', 333: 'right',
-            327: 'home', 335: 'end', 329: 'page up', 337: 'page down',
-            338: 'insert', 339: 'delete',
-            # < > tuşu (Z'nin solunda)
-            86: '<',
-        }
-
-        if scan_code in scan_code_map:
-            return scan_code_map[scan_code]
-
-        # event.name'den gelen karakteri kontrol et ve düzelt
-        # Shift ile basılan karakterlerin orijinal tuşunu bul (Türkçe Q klavye)
-        shift_char_map = {
-            # Sayı satırı shift karakterleri
-            '!': '1', 'é': '2', 'É': '2', '"': '2', '\'': '2',
-            '^': '3', '+': '4', '$': '4', '%': '5',
-            '&': '6', '/': '7', '(': '8', ')': '9', '=': '0',
-            '?': '*', '_': '-',
-            # Noktalama shift karakterleri
-            ';': ',', ':': '.', '>': '<',
-            # Windows'un döndürebileceği diğer garip karakterler
-            '²': '2', '@': '2', '#': '3', '£': '3',
-        }
-
-        name = event.name
-        if name in shift_char_map:
-            return shift_char_map[name]
-
-        # Tek karakter ise küçük harfe çevir
-        if len(name) == 1:
-            return name.lower()
-
-        return name.lower()
 
     def cancel(self):
         keyboard.unhook_all()
@@ -552,8 +489,12 @@ class SelectRegionDialogSimple:
         self.caller.search_region = [x1, y1, x2, y2]
         self.caller.region_label.configure(text=f"{x1},{y1} - {x2},{y2}")
         self.top.destroy()
+        # Ana pencereyi ve dialog'u geri göster
+        self.caller.manager.root.deiconify()
         self.caller.top.deiconify()
 
     def cancel(self):
         self.top.destroy()
+        # Ana pencereyi ve dialog'u geri göster
+        self.caller.manager.root.deiconify()
         self.caller.top.deiconify()

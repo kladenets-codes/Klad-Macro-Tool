@@ -7,6 +7,7 @@ This module contains the core functionality:
 - worker: Worker process for template matching
 - config: Configuration loading and saving
 - export_import: Group export/import functionality
+- keyboard_utils: Keyboard key name utilities
 """
 
 from .constants import (
@@ -15,7 +16,7 @@ from .constants import (
     COMMIT_HASH,
     GITHUB_REPO,
 
-    # Timing
+    # Timing (used by worker)
     STATUS_CHECK_INTERVAL_MS,
     TEST_CYCLE_INTERVAL_MS,
     FPS_REPORT_INTERVAL_SEC,
@@ -35,10 +36,6 @@ from .constants import (
     LOG_COLORS,
     MACRO_ACTION_COLORS,
     MACRO_ACTION_LABELS,
-
-    # Window
-    MAIN_WINDOW_SIZE,
-    MAIN_WINDOW_MIN_SIZE,
 
     # Export
     EXPORT_START_MARKER,
@@ -67,6 +64,8 @@ from .export_import import (
     parse_import_code,
 )
 
+from .keyboard_utils import get_physical_key_name
+
 __all__ = [
     # Version
     'VERSION',
@@ -88,8 +87,6 @@ __all__ = [
     'LOG_COLORS',
     'MACRO_ACTION_COLORS',
     'MACRO_ACTION_LABELS',
-    'MAIN_WINDOW_SIZE',
-    'MAIN_WINDOW_MIN_SIZE',
     'EXPORT_START_MARKER',
     'EXPORT_END_MARKER',
 
@@ -97,6 +94,7 @@ __all__ = [
     'press_key_with_timing',
     'press_key_combo',
     'execute_macro',
+    'get_physical_key_name',
 
     # Worker
     'group_worker',

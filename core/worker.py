@@ -17,7 +17,10 @@ from .constants import (
     FPS_REPORT_INTERVAL_SEC,
     FPS_RESET_INTERVAL_SEC,
     IDLE_SLEEP_SEC,
-    DEFAULT_TIMING
+    DEFAULT_TIMING,
+    DEFAULT_TRIGGER_CONDITION,
+    TRIGGER_CONDITION_FOUND,
+    TRIGGER_CONDITION_NOT_FOUND
 )
 
 logger = logging.getLogger(__name__)
@@ -95,36 +98,46 @@ def group_worker(
             logger.error(f"[{group_name}] Screen capture error: {e}")
             return
 
-        found_match = None
+        triggered_template = None
 
         for data in loaded_templates:
             try:
                 result = cv2.matchTemplate(screenshot_gray, data['image'], cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, _ = cv2.minMaxLoc(result)
 
-                if max_val >= data['threshold']:
-                    found_match = data
+                is_found = max_val >= data['threshold']
+                trigger_condition = data.get('trigger_condition', TRIGGER_CONDITION_FOUND)
+
+                # Tetikleme koşuluna göre kontrol et
+                should_trigger = False
+                if trigger_condition == TRIGGER_CONDITION_FOUND and is_found:
+                    should_trigger = True
+                elif trigger_condition == TRIGGER_CONDITION_NOT_FOUND and not is_found:
+                    should_trigger = True
+
+                if should_trigger:
+                    triggered_template = data
                     break
             except Exception as e:
                 logger.error(f"[{group_name}] Template match error: {e}")
 
         frame_time_ms = (time.perf_counter() - frame_start) * 1000
 
-        if found_match:
+        if triggered_template:
             # Send match status to main process
             status_queue.put({
                 'group_id': group_id,
                 'type': 'match',
-                'color': found_match['color'],
-                'template': found_match['name'],
+                'color': triggered_template['color'],
+                'template': triggered_template['name'],
                 'time_ms': round(frame_time_ms, 2)
             })
 
             # Execute macro or simple key press
-            if found_match.get('use_macro') and found_match.get('macro'):
-                execute_macro(found_match['macro'])
+            if triggered_template.get('use_macro') and triggered_template.get('macro'):
+                execute_macro(triggered_template['macro'])
             else:
-                press_key_combo(found_match['key_combo'], found_match.get('timing', {}))
+                press_key_combo(triggered_template['key_combo'], triggered_template.get('timing', {}))
 
             # Reset indicator to green after execution
             status_queue.put({
@@ -236,6 +249,7 @@ def _load_templates(group_data: Dict[str, Any]) -> List[Dict[str, Any]]:
                     'key_combo': template.get('key_combo', ''),
                     'color': template.get('color', '#00ff88'),
                     'timing': template.get('timing', DEFAULT_TIMING),
+                    'trigger_condition': template.get('trigger_condition', DEFAULT_TRIGGER_CONDITION),
                     'use_macro': template.get('use_macro', False),
                     'macro': template.get('macro', [])
                 })

@@ -84,9 +84,10 @@ MACRO_ACTION_LABELS = {
     "sleep": "⏱ SLEEP"
 }
 
-# Window sizes
-MAIN_WINDOW_SIZE = "1100x800"
-MAIN_WINDOW_MIN_SIZE = (950, 700)
+# Template trigger conditions
+TRIGGER_CONDITION_FOUND = "found"      # Görsel bulunduğunda tetikle
+TRIGGER_CONDITION_NOT_FOUND = "not_found"  # Görsel bulunmadığında tetikle
+DEFAULT_TRIGGER_CONDITION = TRIGGER_CONDITION_FOUND
 
 # Export markers
 EXPORT_START_MARKER = "===KLAD_MACRO_EXPORT_START==="

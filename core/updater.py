@@ -169,11 +169,6 @@ def open_github_page():
     webbrowser.open(f"https://github.com/{GITHUB_REPO}")
 
 
-def get_current_version():
-    """Mevcut versiyonu döndür"""
-    return VERSION
-
-
 def get_current_commit():
     """Mevcut commit hash'i döndür (kısa)"""
     return COMMIT_HASH[:7]

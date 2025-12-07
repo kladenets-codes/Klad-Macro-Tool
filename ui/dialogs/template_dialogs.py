@@ -11,6 +11,9 @@ import keyboard
 import time
 from pathlib import Path
 
+from core.keyboard_utils import get_physical_key_name
+from core.constants import DEFAULT_TRIGGER_CONDITION, TRIGGER_CONDITION_FOUND, TRIGGER_CONDITION_NOT_FOUND
+
 # Images folder path
 IMAGES_FOLDER = Path(__file__).parent.parent.parent / "images"
 
@@ -60,8 +63,10 @@ class AddTemplateDialog:
         self.top.geometry(f'{w}x{h}+{x}+{y}')
 
     def start_capture(self):
+        # Ana pencereyi ve bu dialog'u gizle
+        self.manager.root.withdraw()
         self.top.withdraw()
-        self.top.after(200, self.do_capture)
+        self.top.after(300, self.do_capture)
 
     def do_capture(self):
         TemplateCapture(self.top.master, self)
@@ -179,6 +184,8 @@ class TemplateCapture:
 
     def cancel(self):
         self.top.destroy()
+        # Ana pencereyi ve add dialog'u geri göster
+        self.add_dialog.manager.root.deiconify()
         self.add_dialog.top.deiconify()
 
 
@@ -191,9 +198,12 @@ class TemplateFinalizeDialog:
         self.key_combo = None
         self.selected_color = "#00ff88"
 
+        # Ana pencereyi geri göster (capture tamamlandı)
+        self.manager.root.deiconify()
+
         self.top = ctk.CTkToplevel(parent)
         self.top.title("Template Detayları")
-        self.top.geometry("450x480")
+        self.top.geometry("450x530")
         self.top.transient(parent)
         self.top.grab_set()
         self.top.resizable(False, False)
@@ -266,6 +276,25 @@ class TemplateFinalizeDialog:
         self.post_entry.pack(side="left", padx=3)
         self.post_entry.insert(0, "1")
 
+        # Trigger Condition
+        trigger_row = ctk.CTkFrame(main, fg_color="transparent")
+        trigger_row.pack(fill="x", pady=8)
+        ctk.CTkLabel(trigger_row, text="Tetikleme:", width=70).pack(side="left")
+        self.trigger_var = ctk.StringVar(value=DEFAULT_TRIGGER_CONDITION)
+        self.trigger_menu = ctk.CTkOptionMenu(
+            trigger_row,
+            values=["Görsel bulunduğunda", "Görsel bulunmadığında"],
+            variable=self.trigger_var,
+            width=180,
+            height=28,
+            fg_color="#333333",
+            button_color="#444444",
+            button_hover_color="#555555",
+            command=self._on_trigger_change
+        )
+        self.trigger_menu.pack(side="left", padx=10)
+        self.trigger_menu.set("Görsel bulunduğunda")
+
         # Buttons
         btn_frame = ctk.CTkFrame(main, fg_color="transparent")
         btn_frame.pack(fill="x", pady=(15, 0))
@@ -291,6 +320,13 @@ class TemplateFinalizeDialog:
         if color[1]:
             self.selected_color = color[1]
             self.color_preview.configure(fg_color=self.selected_color)
+
+    def _on_trigger_change(self, value):
+        """Tetikleme koşulu değiştiğinde çağrılır"""
+        if value == "Görsel bulunduğunda":
+            self.trigger_var.set(TRIGGER_CONDITION_FOUND)
+        else:
+            self.trigger_var.set(TRIGGER_CONDITION_NOT_FOUND)
 
     def save(self):
         name = self.name_entry.get().strip()
@@ -319,6 +355,10 @@ class TemplateFinalizeDialog:
         except:
             pre = hold = post = 1
 
+        # Get trigger condition
+        trigger_display = self.trigger_menu.get()
+        trigger_condition = TRIGGER_CONDITION_FOUND if trigger_display == "Görsel bulunduğunda" else TRIGGER_CONDITION_NOT_FOUND
+
         new_template = {
             "name": name,
             "file": filename,
@@ -327,6 +367,7 @@ class TemplateFinalizeDialog:
             "key_combo": self.key_combo,
             "color": self.selected_color,
             "timing": {"pre_delay": pre, "hold_time": hold, "post_delay": post},
+            "trigger_condition": trigger_condition,
             "use_macro": False,
             "macro": []
         }
@@ -391,79 +432,12 @@ class CaptureKeyComboDialog:
     def on_key(self, event):
         if event.event_type == 'down':
             # Scan code'dan fiziksel tuş adını al (shift ile değişen karakterleri önler)
-            key_name = self._get_physical_key_name(event)
+            key_name = get_physical_key_name(event)
             if key_name and key_name not in self.captured_keys:
                 self.captured_keys.append(key_name)
                 combo = ' + '.join(self.captured_keys)
                 self.key_label.configure(text=combo)
                 self.ok_btn.configure(state="normal")
-
-    def _get_physical_key_name(self, event):
-        """Fiziksel tuş adını döndür (shift ile değişen karakterleri önle)"""
-        # Modifier tuşları direkt kullan
-        modifiers = {'shift', 'ctrl', 'alt', 'left shift', 'right shift',
-                     'left ctrl', 'right ctrl', 'left alt', 'right alt',
-                     'left windows', 'right windows'}
-        if event.name.lower() in modifiers:
-            return event.name.lower()
-
-        # Scan code ile fiziksel tuşu bul
-        scan_code = event.scan_code
-
-        # Bilinen scan code -> tuş eşleştirmesi (Türkçe Q klavye)
-        scan_code_map = {
-            # Sayı satırı - Shift ile: ! ' ^ + % & / ( ) = ? _
-            41: '"', 2: '1', 3: '2', 4: '3', 5: '4', 6: '5',
-            7: '6', 8: '7', 9: '8', 10: '9', 11: '0', 12: '*', 13: '-',
-            # Harf satırları
-            16: 'q', 17: 'w', 18: 'e', 19: 'r', 20: 't', 21: 'y',
-            22: 'u', 23: 'i', 24: 'o', 25: 'p', 26: 'ğ', 27: 'ü',
-            30: 'a', 31: 's', 32: 'd', 33: 'f', 34: 'g', 35: 'h',
-            36: 'j', 37: 'k', 38: 'l', 39: 'ş', 40: 'i', 43: ',',
-            44: 'z', 45: 'x', 46: 'c', 47: 'v', 48: 'b', 49: 'n',
-            50: 'm', 51: 'ö', 52: 'ç', 53: '.',
-            # Özel tuşlar
-            14: 'backspace', 15: 'tab', 28: 'enter', 57: 'space',
-            58: 'caps lock', 1: 'esc',
-            # F tuşları
-            59: 'f1', 60: 'f2', 61: 'f3', 62: 'f4', 63: 'f5', 64: 'f6',
-            65: 'f7', 66: 'f8', 67: 'f9', 68: 'f10', 87: 'f11', 88: 'f12',
-            # Numpad
-            69: 'num lock',
-            # Ok tuşları (extended keys - farklı scan code)
-            328: 'up', 336: 'down', 331: 'left', 333: 'right',
-            327: 'home', 335: 'end', 329: 'page up', 337: 'page down',
-            338: 'insert', 339: 'delete',
-            # < > tuşu (Z'nin solunda)
-            86: '<',
-        }
-
-        if scan_code in scan_code_map:
-            return scan_code_map[scan_code]
-
-        # event.name'den gelen karakteri kontrol et ve düzelt
-        # Shift ile basılan karakterlerin orijinal tuşunu bul (Türkçe Q klavye)
-        shift_char_map = {
-            # Sayı satırı shift karakterleri
-            '!': '1', 'é': '2', 'É': '2', '"': '2', '\'': '2',
-            '^': '3', '+': '4', '$': '4', '%': '5',
-            '&': '6', '/': '7', '(': '8', ')': '9', '=': '0',
-            '?': '*', '_': '-',
-            # Noktalama shift karakterleri
-            ';': ',', ':': '.', '>': '<',
-            # Windows'un döndürebileceği diğer garip karakterler
-            '²': '2', '@': '2', '#': '3', '£': '3',
-        }
-
-        name = event.name
-        if name in shift_char_map:
-            return shift_char_map[name]
-
-        # Tek karakter ise küçük harfe çevir
-        if len(name) == 1:
-            return name.lower()
-
-        return name.lower()
 
     def reset(self):
         """Yakalanan tuşları sıfırla"""
@@ -643,6 +617,26 @@ class EditTemplateDialog:
 
         # Toggle başlangıç durumu
         self.toggle_macro_mode()
+
+        # Trigger Condition
+        trigger_row = ctk.CTkFrame(main_scroll, fg_color="transparent")
+        trigger_row.pack(fill="x", pady=8)
+        ctk.CTkLabel(trigger_row, text="Tetikleme:", width=80).pack(side="left")
+        current_trigger = template.get('trigger_condition', DEFAULT_TRIGGER_CONDITION)
+        current_display = "Görsel bulunduğunda" if current_trigger == TRIGGER_CONDITION_FOUND else "Görsel bulunmadığında"
+        self.trigger_var = ctk.StringVar(value=current_trigger)
+        self.trigger_menu = ctk.CTkOptionMenu(
+            trigger_row,
+            values=["Görsel bulunduğunda", "Görsel bulunmadığında"],
+            width=180,
+            height=28,
+            fg_color="#333333",
+            button_color="#444444",
+            button_hover_color="#555555",
+            command=self._on_trigger_change
+        )
+        self.trigger_menu.pack(side="left", padx=5)
+        self.trigger_menu.set(current_display)
 
         # Enabled
         self.enabled_var = ctk.BooleanVar(value=template.get('enabled', True))
@@ -951,6 +945,13 @@ class EditTemplateDialog:
             self.selected_color = color[1]
             self.color_preview.configure(fg_color=self.selected_color)
 
+    def _on_trigger_change(self, value):
+        """Tetikleme koşulu değiştiğinde çağrılır"""
+        if value == "Görsel bulunduğunda":
+            self.trigger_var.set(TRIGGER_CONDITION_FOUND)
+        else:
+            self.trigger_var.set(TRIGGER_CONDITION_NOT_FOUND)
+
     def save(self):
         name = self.name_entry.get().strip()
         if not name:
@@ -981,6 +982,10 @@ class EditTemplateDialog:
         self.template['color'] = self.selected_color
         self.template['enabled'] = self.enabled_var.get()
         self.template['timing'] = {"pre_delay": pre, "hold_time": hold, "post_delay": post}
+
+        # Trigger condition
+        trigger_display = self.trigger_menu.get()
+        self.template['trigger_condition'] = TRIGGER_CONDITION_FOUND if trigger_display == "Görsel bulunduğunda" else TRIGGER_CONDITION_NOT_FOUND
 
         # Makro bilgisi
         self.template['use_macro'] = self.use_macro_var.get()

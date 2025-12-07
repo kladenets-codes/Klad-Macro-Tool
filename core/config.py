@@ -13,7 +13,8 @@ from .constants import (
     DEFAULT_TIMING,
     DEFAULT_SEARCH_REGION,
     DEFAULT_SPAM_INTERVAL,
-    DEFAULT_CYCLE_DELAY
+    DEFAULT_CYCLE_DELAY,
+    DEFAULT_TRIGGER_CONDITION
 )
 
 logger = logging.getLogger(__name__)
@@ -62,6 +63,13 @@ def load_config(config_file: Path) -> Tuple[List[Dict], Dict[str, Any], List[Dic
             groups = data.get("groups", [])
             global_settings = data.get("global_settings", {})
             presets = data.get("presets", [])
+
+            # Migration: Eski template'lere trigger_condition ekle
+            for group in groups:
+                for template in group.get('templates', []):
+                    if 'trigger_condition' not in template:
+                        template['trigger_condition'] = DEFAULT_TRIGGER_CONDITION
+
             logger.info(f"Config loaded: {len(groups)} groups, {len(presets)} presets")
             return groups, global_settings, presets
     except Exception as e:

@@ -256,7 +256,7 @@ class ConfigManager:
         group_btn_frame = ctk.CTkFrame(left_panel, fg_color="transparent", height=50)
         group_btn_frame.pack(fill="x", padx=15, pady=12)
 
-        ctk.CTkButton(
+        self.add_group_btn = ctk.CTkButton(
             group_btn_frame,
             text="+  Yeni",
             width=75,
@@ -267,9 +267,10 @@ class ConfigManager:
             text_color="#000000",
             font=ctk.CTkFont(size=12, weight="bold"),
             command=self.add_group
-        ).pack(side="left", padx=(0, 6))
+        )
+        self.add_group_btn.pack(side="left", padx=(0, 6))
 
-        ctk.CTkButton(
+        self.edit_group_btn = ctk.CTkButton(
             group_btn_frame,
             text=" ✏️",
             width=40,
@@ -279,9 +280,10 @@ class ConfigManager:
             hover_color=self.colors["border"],
             font=ctk.CTkFont(size=13),
             command=self.edit_group
-        ).pack(side="left", padx=(0, 6))
+        )
+        self.edit_group_btn.pack(side="left", padx=(0, 6))
 
-        ctk.CTkButton(
+        self.delete_group_btn = ctk.CTkButton(
             group_btn_frame,
             text=" 🗑",
             width=40,
@@ -291,7 +293,8 @@ class ConfigManager:
             hover_color="#cc3a47",
             font=ctk.CTkFont(size=13),
             command=self.delete_group
-        ).pack(side="left")
+        )
+        self.delete_group_btn.pack(side="left")
 
         # Import/Export buttons
         ie_btn_frame = ctk.CTkFrame(left_panel, fg_color="transparent", height=40)
@@ -391,7 +394,7 @@ class ConfigManager:
         template_btn_frame = ctk.CTkFrame(templates_header, fg_color="transparent")
         template_btn_frame.pack(side="right")
 
-        ctk.CTkButton(
+        self.add_template_btn = ctk.CTkButton(
             template_btn_frame,
             text="+ Ekle",
             width=70,
@@ -402,9 +405,10 @@ class ConfigManager:
             font=ctk.CTkFont(size=11),
             anchor="center",
             command=self.add_template
-        ).pack(side="left", padx=(0, 5))
+        )
+        self.add_template_btn.pack(side="left", padx=(0, 5))
 
-        ctk.CTkButton(
+        self.edit_template_btn = ctk.CTkButton(
             template_btn_frame,
             text=" ✏️",
             width=40,
@@ -414,9 +418,10 @@ class ConfigManager:
             hover_color=self.colors["border"],
             font=ctk.CTkFont(size=13),
             command=self.edit_template
-        ).pack(side="left", padx=(0, 6))
+        )
+        self.edit_template_btn.pack(side="left", padx=(0, 6))
 
-        ctk.CTkButton(
+        self.delete_template_btn = ctk.CTkButton(
             template_btn_frame,
             text=" 🗑",
             width=40,
@@ -426,9 +431,10 @@ class ConfigManager:
             hover_color="#cc3a47",
             font=ctk.CTkFont(size=13),
             command=self.delete_template
-        ).pack(side="left", padx=(0, 6))
+        )
+        self.delete_template_btn.pack(side="left", padx=(0, 6))
 
-        ctk.CTkButton(
+        self.duplicate_template_btn = ctk.CTkButton(
             template_btn_frame,
             text=" 📋",
             width=40,
@@ -438,7 +444,8 @@ class ConfigManager:
             hover_color="#7a6a47",
             font=ctk.CTkFont(size=13),
             command=self.duplicate_template
-        ).pack(side="left")
+        )
+        self.duplicate_template_btn.pack(side="left")
 
         # Template list
         self.template_scroll = ctk.CTkScrollableFrame(
@@ -1745,6 +1752,16 @@ Kullanım:
             )
             self.status_indicator.configure(fg_color=self.colors["warning"])
             self.status_label.configure(text="Hazır", text_color=self.colors["warning"])
+
+            # Bot aktifken düzenleme butonlarını devre dışı bırak
+            self.add_group_btn.configure(state="disabled")
+            self.edit_group_btn.configure(state="disabled")
+            self.delete_group_btn.configure(state="disabled")
+            self.add_template_btn.configure(state="disabled")
+            self.edit_template_btn.configure(state="disabled")
+            self.delete_template_btn.configure(state="disabled")
+            self.duplicate_template_btn.configure(state="disabled")
+            self.test_mode_btn.configure(state="disabled")
         else:
             self.start_stop_btn.configure(
                 text="▶  BAŞLAT",
@@ -1754,6 +1771,16 @@ Kullanım:
             )
             self.status_indicator.configure(fg_color=self.colors["danger"])
             self.status_label.configure(text="Durdu", text_color=self.colors["danger"])
+
+            # Bot durduğunda düzenleme butonlarını aktif et
+            self.add_group_btn.configure(state="normal")
+            self.edit_group_btn.configure(state="normal")
+            self.delete_group_btn.configure(state="normal")
+            self.add_template_btn.configure(state="normal")
+            self.edit_template_btn.configure(state="normal")
+            self.delete_template_btn.configure(state="normal")
+            self.duplicate_template_btn.configure(state="normal")
+            self.test_mode_btn.configure(state="normal")
 
     # ==================== INDICATORS ====================
 

@@ -55,7 +55,7 @@ def load_config(config_file: Path) -> Tuple[List[Dict], Dict[str, Any], List[Dic
     """
     if not config_file.exists():
         logger.info("Config file not found, using defaults")
-        return [get_default_group()], {"debug_enabled": False, "fps_overlay_enabled": True}, []
+        return [get_default_group()], {"debug_enabled": False, "fps_overlay_enabled": True, "cpu_cores": 0}, []
 
     try:
         with open(config_file, 'r', encoding='utf-8') as f:
@@ -70,11 +70,15 @@ def load_config(config_file: Path) -> Tuple[List[Dict], Dict[str, Any], List[Dic
                     if 'trigger_condition' not in template:
                         template['trigger_condition'] = DEFAULT_TRIGGER_CONDITION
 
+            # Migration: Eski config'lere cpu_cores ekle
+            if 'cpu_cores' not in global_settings:
+                global_settings['cpu_cores'] = 0  # 0 = sınırsız
+
             logger.info(f"Config loaded: {len(groups)} groups, {len(presets)} presets")
             return groups, global_settings, presets
     except Exception as e:
         logger.error(f"Failed to load config: {e}")
-        return [get_default_group()], {"debug_enabled": False, "fps_overlay_enabled": True}, []
+        return [get_default_group()], {"debug_enabled": False, "fps_overlay_enabled": True, "cpu_cores": 0}, []
 
 
 def save_config(

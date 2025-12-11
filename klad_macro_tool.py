@@ -98,7 +98,8 @@ class ConfigManager:
         self.groups = []
         self.global_settings = {
             "debug_enabled": False,
-            "fps_overlay_enabled": True
+            "fps_overlay_enabled": True,
+            "cpu_cores": 0  # 0 = sınırsız
         }
         self.presets = []
 
@@ -506,6 +507,50 @@ class ConfigManager:
             hover_color=self.colors["accent_hover"],
             command=self.toggle_fps_overlay
         ).pack(anchor="w", pady=(8, 0))
+
+        # CPU Çekirdek Slider
+        cpu_limit_frame = ctk.CTkFrame(debug_content, fg_color="transparent")
+        cpu_limit_frame.pack(anchor="w", pady=(12, 0), fill="x")
+
+        ctk.CTkLabel(
+            cpu_limit_frame,
+            text="CPU Çekirdek:",
+            font=ctk.CTkFont(size=13)
+        ).pack(side="left")
+
+        # Toplam çekirdek sayısını al
+        import psutil
+        self.total_cpu_cores = psutil.cpu_count(logical=True) or 4
+        current_cores = self.global_settings.get("cpu_cores", 0)  # 0 = sınırsız
+        if current_cores == 0 or current_cores > self.total_cpu_cores:
+            current_cores = self.total_cpu_cores
+
+        self.cpu_cores_slider = ctk.CTkSlider(
+            cpu_limit_frame,
+            from_=1,
+            to=self.total_cpu_cores,
+            number_of_steps=self.total_cpu_cores - 1,
+            width=150,
+            height=16,
+            fg_color=self.colors["bg_dark"],
+            progress_color=self.colors["accent"],
+            button_color=self.colors["accent"],
+            button_hover_color=self.colors["accent_hover"],
+            command=self.on_cpu_cores_change
+        )
+        self.cpu_cores_slider.pack(side="left", padx=(10, 5))
+        self.cpu_cores_slider.set(current_cores)
+
+        # Değer etiketi
+        display_text = "Sınırsız" if current_cores == self.total_cpu_cores else f"{current_cores}/{self.total_cpu_cores}"
+        self.cpu_cores_label = ctk.CTkLabel(
+            cpu_limit_frame,
+            text=display_text,
+            font=ctk.CTkFont(size=12),
+            width=70,
+            text_color=self.colors["accent"]
+        )
+        self.cpu_cores_label.pack(side="left")
 
         # Log Console card
         log_card = ctk.CTkFrame(settings_scroll, fg_color=self.colors["bg_secondary"], corner_radius=12)
@@ -1370,10 +1415,6 @@ Kullanım:
 
     def start_test_mode(self):
         """Start test mode - shows template matching status in overlay"""
-        if self.bot_active:
-            messagebox.showwarning("Uyarı", "Bot çalışırken test modu açılamaz!")
-            return
-
         # Aktif grup kontrolü
         enabled_groups = [g for g in self.groups if g.get('enabled', True)]
         if not enabled_groups:
@@ -1685,6 +1726,9 @@ Kullanım:
             p.start()
             self.processes[group_id] = p
 
+            # CPU affinity ayarla
+            self.apply_cpu_affinity(p.pid)
+
             # Create indicator
             self.create_indicator(group_id, len(self.indicator_windows))
 
@@ -1761,7 +1805,6 @@ Kullanım:
             self.edit_template_btn.configure(state="disabled")
             self.delete_template_btn.configure(state="disabled")
             self.duplicate_template_btn.configure(state="disabled")
-            self.test_mode_btn.configure(state="disabled")
         else:
             self.start_stop_btn.configure(
                 text="▶  BAŞLAT",
@@ -1780,7 +1823,6 @@ Kullanım:
             self.edit_template_btn.configure(state="normal")
             self.delete_template_btn.configure(state="normal")
             self.duplicate_template_btn.configure(state="normal")
-            self.test_mode_btn.configure(state="normal")
 
     # ==================== INDICATORS ====================
 
@@ -1977,7 +2019,7 @@ Kullanım:
         except Exception as e:
             messagebox.showerror("Hata", f"Config yüklenemedi: {e}")
             self.groups = [get_default_group()]
-            self.global_settings = {"debug_enabled": False, "fps_overlay_enabled": True}
+            self.global_settings = {"debug_enabled": False, "fps_overlay_enabled": True, "cpu_cores": 0}
             self.presets = []
 
     def add_log(self, message, level="INFO"):
@@ -2025,11 +2067,55 @@ Kullanım:
             self.add_log("FPS overlay kapatıldı.", "INFO")
             self.destroy_fps_overlay()
 
+    def apply_cpu_affinity(self, pid):
+        """Process'e CPU affinity uygula"""
+        try:
+            import psutil
+
+            # Toplam çekirdek sayısı
+            total_cores = psutil.cpu_count(logical=True)
+            if total_cores is None or total_cores < 1:
+                return
+
+            # Kullanılacak çekirdek sayısını al
+            cpu_cores = self.global_settings.get("cpu_cores", 0)
+
+            # 0 veya max = sınırsız
+            if cpu_cores == 0 or cpu_cores >= total_cores:
+                return  # Sınırsız, bir şey yapma
+
+            # İlk N çekirdeği kullan
+            affinity_mask = list(range(cpu_cores))
+
+            # Process'e affinity uygula
+            proc = psutil.Process(pid)
+            proc.cpu_affinity(affinity_mask)
+
+            logger.info(f"CPU affinity set for PID {pid}: {cpu_cores}/{total_cores} cores")
+        except ImportError:
+            logger.warning("psutil not installed, CPU affinity not applied")
+        except Exception as e:
+            logger.error(f"Failed to set CPU affinity: {e}")
+
+    def on_cpu_cores_change(self, value):
+        """CPU çekirdek sayısı değiştiğinde çağrılır"""
+        cores = int(value)
+        self.global_settings["cpu_cores"] = cores
+
+        # Etiketi güncelle
+        if cores == self.total_cpu_cores:
+            self.cpu_cores_label.configure(text="Sınırsız")
+        else:
+            self.cpu_cores_label.configure(text=f"{cores}/{self.total_cpu_cores}")
+
     def save_config(self, silent=False):
         """Save config to JSON"""
         try:
             self.global_settings["debug_enabled"] = self.debug_var.get()
             self.global_settings["fps_overlay_enabled"] = self.fps_overlay_var.get()
+            # CPU çekirdek sayısını kaydet
+            if hasattr(self, 'cpu_cores_slider'):
+                self.global_settings["cpu_cores"] = int(self.cpu_cores_slider.get())
 
             success = core_save_config(
                 CONFIG_FILE,

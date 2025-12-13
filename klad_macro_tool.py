@@ -254,7 +254,7 @@ class ConfigManager:
         main_container.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Left panel - Group list (wider for better visibility)
-        left_panel = ctk.CTkFrame(main_container, fg_color=self.colors["bg_secondary"], corner_radius=12, width=360)
+        left_panel = ctk.CTkFrame(main_container, fg_color=self.colors["bg_secondary"], corner_radius=12, width=420)
         left_panel.pack(side="left", fill="y", padx=(0, 10))
         left_panel.pack_propagate(False)
 
@@ -262,8 +262,8 @@ class ConfigManager:
         left_panel_content = ctk.CTkFrame(left_panel, fg_color="transparent")
         left_panel_content.pack(fill="both", expand=True, padx=8, pady=8)
 
-        # 1. Sütun (Sol): Butonlar - %15 genişlik (54px = 360 * 0.15)
-        button_column = ctk.CTkFrame(left_panel_content, fg_color="transparent", width=54)
+        # 1. Sütun (Sol): Butonlar - %15 genişlik (63px = 420 * 0.15)
+        button_column = ctk.CTkFrame(left_panel_content, fg_color="transparent", width=63)
         button_column.pack(side="left", fill="y", padx=(0, 6))
         button_column.pack_propagate(False)
 
@@ -789,6 +789,9 @@ Kullanım:
 
     def refresh_group_list(self):
         """Refresh the group list (supports nested folders)"""
+        # OPTIMIZATION: Invalidate caches when groups change
+        self._invalidate_caches()
+
         # Clear existing widgets
         for widget in self.group_scroll.winfo_children():
             widget.pack_forget()
@@ -823,12 +826,16 @@ Kullanım:
         folder_bg = folder.get('color_bg', '#3a3a4e')
         folder_fg = folder.get('color_fg', '#ffcc00')
 
+        # Seçili klasör için border rengini vurgula
+        border_color = self.colors["accent"] if is_selected else folder_fg
+        border_width = 3 if is_selected else 2
+
         # Create container frame with border (klasör renginde çerçeve)
         container = ctk.CTkFrame(
             parent_widget,
             fg_color="transparent",
-            border_width=2,
-            border_color=folder_fg,  # Klasör rengi border
+            border_width=border_width,
+            border_color=border_color,
             corner_radius=10
         )
         container.pack(fill="x", pady=4, padx=(4 + level * 20, 4))
@@ -1264,6 +1271,40 @@ Kullanım:
             target_parent = target_info['parent_list']
             target_index = target_info['index']
 
+            # VALIDATION: Klasör kuralları
+            is_folder_being_dragged = dragged_item.get('type') == 'folder'
+            is_target_inside_folder = target_parent is not self.groups  # Root değilse klasör içi demektir
+
+            # 1. Klasör kendisine atılamaz
+            if is_folder_being_dragged and target_info.get('is_folder_drop'):
+                target_folder = target_info.get('folder')
+                if target_folder and target_folder.get('id') == dragged_item.get('id'):
+                    self.add_log("Klasör kendisine taşınamaz!", "WARNING")
+                    # Reset drag state
+                    self.item_drag_data = {
+                        'active': False,
+                        'item': None,
+                        'parent_list': None,
+                        'index': None,
+                        'widget': None,
+                        'start_y': 0
+                    }
+                    return
+
+            # 2. Klasör başka klasörün içine atılamaz
+            if is_folder_being_dragged and is_target_inside_folder:
+                self.add_log("Klasörler başka klasörlerin içine taşınamaz!", "WARNING")
+                # Reset drag state
+                self.item_drag_data = {
+                    'active': False,
+                    'item': None,
+                    'parent_list': None,
+                    'index': None,
+                    'widget': None,
+                    'start_y': 0
+                }
+                return
+
             # Debug logging
             if self.global_settings.get("debug_enabled", False):
                 self.add_log(f"DRAG: Moving '{dragged_item.get('name')}' to index {target_index} (parent has {len(target_parent)} items)", "DEBUG")
@@ -1271,20 +1312,12 @@ Kullanım:
             # Remember which group is currently selected (by ID)
             selected_group_id = None
             if self.selected_group_index is not None:
-                flat_groups = flatten_groups(self.groups)
+                flat_groups = self.get_flattened_groups()
                 if self.selected_group_index < len(flat_groups):
                     selected_group_id = flat_groups[self.selected_group_index].get('id')
 
             # Perform the move using helper function
             insert_item_at(self.groups, dragged_item, target_parent, target_index)
-
-            # Update selected_group_index to match the selected group's new position
-            if selected_group_id is not None:
-                flat_groups = flatten_groups(self.groups)
-                for i, group in enumerate(flat_groups):
-                    if group.get('id') == selected_group_id:
-                        self.selected_group_index = i
-                        break
 
             # If dropped into a folder, expand it
             if target_info.get('is_folder_drop'):
@@ -1292,8 +1325,39 @@ Kullanım:
                 if folder:
                     folder['expanded'] = True
 
+            # Update selected_group_index BEFORE refresh so cards get correct bindings
+            if selected_group_id is not None:
+                self._invalidate_caches()  # Invalidate cache because order changed
+                flat_groups = self.get_flattened_groups()
+                for i, group in enumerate(flat_groups):
+                    if group.get('id') == selected_group_id:
+                        self.selected_group_index = i
+                        if self.global_settings.get("debug_enabled", False):
+                            self.add_log(f"DRAG_END: Updated selected_group_index to {i} for '{group.get('name')}'", "DEBUG")
+                        break
+            else:
+                if self.global_settings.get("debug_enabled", False):
+                    self.add_log(f"DRAG_END: No selected group (selected_group_id is None)", "DEBUG")
+
             # Refresh and save (async save için)
             self.refresh_group_list()
+
+            # Debug: Log item order after refresh (groups and folders)
+            if self.global_settings.get("debug_enabled", False):
+                def log_items(items, level=0):
+                    """Recursively log all items with indentation"""
+                    for idx, item in enumerate(items):
+                        item_type = item.get('type', 'group')
+                        indent = "  " * (level + 1)
+                        type_icon = "📁" if item_type == 'folder' else "📄"
+                        self.add_log(f"{indent}[{idx}] {type_icon} {item.get('name')}", "DEBUG")
+                        # If folder, log children
+                        if item_type == 'folder' and item.get('items'):
+                            log_items(item.get('items', []), level + 1)
+
+                self.add_log(f"DRAG_COMPLETE: Item order after refresh:", "DEBUG")
+                log_items(self.groups)
+
             self.root.update_idletasks()  # UI'ı hemen güncelle
             self.root.after(100, lambda: self.save_config(silent=True))  # Save'i geciktirilmiş yap
 
@@ -1309,17 +1373,24 @@ Kullanım:
 
     def _calculate_drop_position(self, y_pos):
         """Calculate where to drop the item based on mouse Y position"""
-        # Get all card widgets recursively (klasör container'ları içindekiler dahil)
-        def get_all_cards(widget):
+        # Get all VISIBLE card widgets (only from expanded folders)
+        def get_visible_cards(widget):
             cards = []
             for child in widget.winfo_children():
                 if hasattr(child, '_item_data'):
-                    cards.append(child)
-                # Recursive: container içindeki card'ları da al
-                cards.extend(get_all_cards(child))
+                    # CRITICAL: Sadece görünür (winfo_viewable) kartları al
+                    if child.winfo_viewable():
+                        cards.append(child)
+                        # Eğer bu bir klasör VE expanded ise, içindekileri de al
+                        item = child._item_data.get('item', {})
+                        if item.get('type') == 'folder' and item.get('expanded', True):
+                            cards.extend(get_visible_cards(child))
+                elif child.winfo_viewable():
+                    # Container olabilir, içine bak
+                    cards.extend(get_visible_cards(child))
             return cards
 
-        all_cards = get_all_cards(self.group_scroll)
+        all_cards = get_visible_cards(self.group_scroll)
 
         if not all_cards:
             return {'parent_list': self.groups, 'index': 0}
@@ -1336,37 +1407,38 @@ Kullanım:
                     data = card._item_data
                     item = data['item']
 
-                    # If it's a folder, check if we should drop INSIDE it
+                    # If it's a folder, use thirds logic
                     if item.get('type') == 'folder':
-                        # Calculate thirds: top third = before, middle third = inside, bottom third = after
-                        third = card_h / 3
-
                         # CRITICAL: Gerçek index'i parent_list'ten al (render index değil!)
                         try:
                             real_index = data['parent_list'].index(item)
                         except (ValueError, AttributeError):
                             real_index = data['index']  # Fallback
 
-                        if y_pos < card_y + third:
-                            # Top third - drop BEFORE folder
+                        # Divide folder card into thirds
+                        third = card_h / 3
+                        relative_y = y_pos - card_y
+
+                        if relative_y < third:
+                            # Top 1/3 - drop BEFORE folder
                             return {
                                 'parent_list': data['parent_list'],
                                 'index': real_index
                             }
-                        elif y_pos > card_y + 2 * third:
-                            # Bottom third - drop AFTER folder
-                            return {
-                                'parent_list': data['parent_list'],
-                                'index': real_index + 1
-                            }
-                        else:
-                            # Middle third - drop INSIDE folder
+                        elif relative_y < 2 * third:
+                            # Middle 1/3 - drop INSIDE folder
                             folder_items = item.get('items', [])
                             return {
                                 'parent_list': folder_items,
                                 'index': len(folder_items),  # Add at end of folder
                                 'is_folder_drop': True,
                                 'folder': item
+                            }
+                        else:
+                            # Bottom 1/3 - drop AFTER folder
+                            return {
+                                'parent_list': data['parent_list'],
+                                'index': real_index + 1
                             }
                     else:
                         # Regular group - check top/bottom half
@@ -1478,7 +1550,7 @@ Kullanım:
             parent_widget = self.group_scroll
 
         # Find the actual index in the flat groups list for compatibility
-        flat_groups = flatten_groups(self.groups)
+        flat_groups = self.get_flattened_groups()
         try:
             group_index = next(i for i, g in enumerate(flat_groups) if g.get('id') == group.get('id'))
         except StopIteration:
@@ -1487,6 +1559,9 @@ Kullanım:
         is_selected = group_index == self.selected_group_index
         is_enabled = group.get('enabled', True)
         has_conflict = is_enabled and group.get('toggle_key', '').lower() in conflicting_keys
+
+        if self.global_settings.get("debug_enabled", False) and is_selected:
+            self.add_log(f"RENDER_GROUP: Rendering '{group.get('name')}' as SELECTED (group_index={group_index}, selected_group_index={self.selected_group_index})", "DEBUG")
 
         # Determine card color - öncelik sırası: conflict > selected > enabled > disabled
         if has_conflict:
@@ -1734,6 +1809,42 @@ Kullanım:
         for widget in [card, card._content, card._info_frame, card._name_label, card._spam_label, card._key_badge]:
             widget.bind("<Button-1>", lambda e, idx=index: self.select_group(idx))
 
+    def _invalidate_caches(self):
+        """Cache'leri invalidate et - groups değiştiğinde çağrılmalı"""
+        self._cache_dirty = True
+        self._flattened_groups_cache = None
+        self._group_id_to_name_cache = {}
+
+    def _rebuild_caches(self):
+        """Cache'leri yeniden oluştur"""
+        if not self._cache_dirty:
+            return
+
+        # Flattened groups cache
+        self._flattened_groups_cache = flatten_groups(self.groups)
+
+        # Group ID to name cache
+        self._group_id_to_name_cache = {}
+        def add_to_cache(items):
+            for item in items:
+                if item.get('type') == 'folder':
+                    add_to_cache(item.get('items', []))
+                elif item.get('type') == 'group':
+                    self._group_id_to_name_cache[item.get('id')] = item.get('name', 'Unknown')
+        add_to_cache(self.groups)
+
+        self._cache_dirty = False
+
+    def get_group_name_by_id(self, group_id):
+        """Hızlı group ID -> name lookup (cache kullanarak)"""
+        self._rebuild_caches()
+        return self._group_id_to_name_cache.get(group_id, 'Unknown')
+
+    def get_flattened_groups(self):
+        """Cached flattened groups list"""
+        self._rebuild_caches()
+        return self._flattened_groups_cache
+
     def get_conflicting_keys(self):
         """Çakışan toggle key'leri bul (sadece aktif gruplar arasında)"""
         return get_conflicting_keys(self.groups)
@@ -1746,7 +1857,7 @@ Kullanım:
         """Get the currently selected group from flat groups list"""
         if self.selected_group_index is None:
             return None
-        flat_groups = flatten_groups(self.groups)
+        flat_groups = self.get_flattened_groups()
         if self.selected_group_index >= len(flat_groups):
             return None
         return flat_groups[self.selected_group_index]
@@ -1767,36 +1878,36 @@ Kullanım:
         return None
 
     def select_group(self, index):
-        """Select a group - update selection state without full refresh"""
+        """Select a group - always use full refresh for consistency"""
         if self.selected_group_index == index:
             return  # Zaten seçili, işlem yapma
-
-        old_index = self.selected_group_index
-        old_folder_id = self.selected_folder_id
 
         self.selected_group_index = index
         self.selected_template_index = None
         self.selected_folder_id = None  # Klasör seçimini clear et
 
-        # Hızlı update: Sadece seçim renklerini güncelle, tam render yapma
-        self._update_selection_colors(old_index, old_folder_id, index, None)
+        if self.global_settings.get("debug_enabled", False):
+            flat_groups = self.get_flattened_groups()
+            if index < len(flat_groups):
+                self.add_log(f"SELECT: Group '{flat_groups[index].get('name')}' at index {index}", "DEBUG")
+
+        # CRITICAL: Always use full refresh to ensure visual consistency
+        # Optimized color updates don't work reliably after drag & drop
+        self.refresh_group_list()
         self.update_group_details()
         self.refresh_template_list()
 
     def select_folder(self, folder_id):
-        """Select a folder - update selection state without full refresh"""
+        """Select a folder - always use full refresh for consistency"""
         if self.selected_folder_id == folder_id:
             return  # Zaten seçili
-
-        old_index = self.selected_group_index
-        old_folder_id = self.selected_folder_id
 
         self.selected_folder_id = folder_id
         self.selected_group_index = None  # Grup seçimini clear et
         self.selected_template_index = None
 
-        # Hızlı update: Sadece seçim renklerini güncelle
-        self._update_selection_colors(old_index, old_folder_id, None, folder_id)
+        # CRITICAL: Always use full refresh to ensure visual consistency
+        self.refresh_group_list()
         self.update_group_details()
         self.refresh_template_list()
 
@@ -1829,20 +1940,39 @@ Kullanım:
                 if hasattr(child, '_item_data'):
                     item_data = child._item_data
                     if item_data['item'].get('id') == folder_id and item_data['item'].get('type') == 'folder':
-                        # Klasör kartını bulduk, rengini güncelle
+                        # Klasör kartını bulduk, parent container'ın border'ını ve card rengini güncelle
                         folder = item_data['item']
                         folder_bg = folder.get('color_bg', '#3a3a4e')
+                        folder_fg = folder.get('color_fg', '#ffcc00')
+
+                        # Card rengini güncelle
                         card_color = self.colors["accent"] if is_selected else folder_bg
                         child.configure(fg_color=card_color)
+
+                        # Parent container'ın border'ını güncelle (CRITICAL: Bu container widget'ı!)
+                        try:
+                            parent_container = child.master  # Card'ın parent'ı container
+                            border_color = self.colors["accent"] if is_selected else folder_fg
+                            border_width = 3 if is_selected else 2
+                            parent_container.configure(border_color=border_color, border_width=border_width)
+                        except:
+                            pass
 
                         # Label rengini güncelle
                         for label_child in child.winfo_children():
                             if hasattr(label_child, 'winfo_children'):
                                 for inner in label_child.winfo_children():
                                     if isinstance(inner, ctk.CTkLabel) and '📁' in str(inner.cget('text')):
-                                        folder_fg = folder.get('color_fg', '#ffcc00')
                                         text_color = "#ffffff" if is_selected else folder_fg
                                         inner.configure(text_color=text_color)
+
+                        # CRITICAL: Force visual update
+                        try:
+                            child.update_idletasks()
+                            self.root.update_idletasks()
+                        except:
+                            pass
+
                         return True
                 # Recursive search
                 if find_folder_card(child):
@@ -1853,43 +1983,68 @@ Kullanım:
 
     def _update_group_card_selection(self, index, is_selected):
         """Update only the selection state of a specific group card. Returns True if card was found and updated."""
-        flat_groups = flatten_groups(self.groups)
+        flat_groups = self.get_flattened_groups()
         if index is None or index >= len(flat_groups):
+            if self.global_settings.get("debug_enabled", False):
+                self.add_log(f"UPDATE_CARD: Index {index} invalid (flat_groups len: {len(flat_groups)})", "DEBUG")
             return False
 
-        # Kartı bul
-        for card in self.group_scroll.winfo_children():
-            if hasattr(card, '_group_index') and card._group_index == index:
-                group = flat_groups[index]
-                is_enabled = group.get('enabled', True)
+        # Kartı recursive olarak bul (klasör container'ları içinde olabilir)
+        def find_card(widget):
+            for child in widget.winfo_children():
+                if hasattr(child, '_group_index') and child._group_index == index:
+                    return child
+                # Recursive: container içindeki kartları da ara
+                result = find_card(child)
+                if result:
+                    return result
+            return None
 
-                # Renk güncelle - 3 basit durum
-                if is_selected:
-                    card_color = self.colors["accent"]  # CYAN - en yüksek öncelik
-                elif is_enabled:
-                    card_color = "#1a1a1a"  # KOYU SİYAH - orta öncelik
-                else:
-                    card_color = self.colors["bg_secondary"]  # GRİ - disabled
+        card = find_card(self.group_scroll)
+        if self.global_settings.get("debug_enabled", False):
+            group_name = flat_groups[index].get('name') if index < len(flat_groups) else 'Unknown'
+            self.add_log(f"UPDATE_CARD: Index {index} ({group_name}) - Card {'FOUND' if card else 'NOT FOUND'}, selected={is_selected}", "DEBUG")
 
-                card.configure(fg_color=card_color)
+        if card:
+            group = flat_groups[index]
+            is_enabled = group.get('enabled', True)
 
-                # Text renkleri güncelle
-                name_color = "#ffffff" if is_selected else (self.colors["text"] if is_enabled else self.colors["text_secondary"])
-                card._name_label.configure(text_color=name_color)
+            # Renk güncelle - 3 basit durum
+            if is_selected:
+                card_color = self.colors["accent"]  # CYAN - en yüksek öncelik
+            elif is_enabled:
+                card_color = "#1a1a1a"  # KOYU SİYAH - orta öncelik
+            else:
+                card_color = self.colors["bg_secondary"]  # GRİ - disabled
 
-                spam_color = "#cccccc" if is_selected else self.colors["text_secondary"]
-                card._spam_label.configure(text_color=spam_color)
+            if self.global_settings.get("debug_enabled", False):
+                self.add_log(f"UPDATE_CARD: Setting color to {card_color}", "DEBUG")
 
-                badge_bg = "#1a5f7a" if is_selected else self.colors["border"]
-                badge_text_color = "#ffffff" if is_selected else self.colors["text_secondary"]
-                card._key_badge.configure(fg_color=badge_bg, text_color=badge_text_color)
-                return True
+            card.configure(fg_color=card_color)
+            # CRITICAL: CustomTkinter needs update_idletasks() to trigger visual refresh
+            try:
+                card.update_idletasks()
+                self.root.update_idletasks()
+            except:
+                pass
+
+            # Text renkleri güncelle
+            name_color = "#ffffff" if is_selected else (self.colors["text"] if is_enabled else self.colors["text_secondary"])
+            card._name_label.configure(text_color=name_color)
+
+            spam_color = "#cccccc" if is_selected else self.colors["text_secondary"]
+            card._spam_label.configure(text_color=spam_color)
+
+            badge_bg = "#1a5f7a" if is_selected else self.colors["border"]
+            badge_text_color = "#ffffff" if is_selected else self.colors["text_secondary"]
+            card._key_badge.configure(fg_color=badge_bg, text_color=badge_text_color)
+            return True
 
         return False  # Card not found
 
     def toggle_group_enabled(self, index):
-        """Toggle group enabled/disabled - optimized to only update that card"""
-        flat_groups = flatten_groups(self.groups)
+        """Toggle group enabled/disabled - always use full refresh for consistency"""
+        flat_groups = self.get_flattened_groups()
         if index < len(flat_groups):
             group = flat_groups[index]
             current = group.get('enabled', True)
@@ -1897,9 +2052,8 @@ Kullanım:
             status = "aktif" if not current else "pasif"
             self.add_log(f"Grup '{group['name']}' {status} yapıldı.", "INFO")
 
-            # Sadece o grubun kartını güncelle (tam refresh yerine)
-            is_selected = (self.selected_group_index == index)
-            self._update_group_card_selection(index, is_selected)
+            # CRITICAL: Always use full refresh to ensure visual consistency
+            self.refresh_group_list()
 
             # Config'i async kaydet
             self.root.after(100, lambda: self.save_config(silent=True))
@@ -2271,22 +2425,46 @@ Kullanım:
 
     def add_folder(self):
         """Add a new folder"""
-        # Simple dialog for folder name
+        # Same dialog as edit
         dialog = ctk.CTkInputDialog(
             text="Klasör adı:",
             title="Yeni Klasör"
         )
         folder_name = dialog.get_input()
 
-        if folder_name:
+        if folder_name and folder_name.strip():
             new_folder = get_default_folder()
-            new_folder['name'] = folder_name
+            new_folder['name'] = folder_name.strip()
             self.groups.append(new_folder)
             self.refresh_group_list()
             self.save_config(silent=True)
 
     def edit_group(self):
-        """Edit selected group"""
+        """Edit selected item (group or folder)"""
+        # Önce klasör seçili mi kontrol et
+        selected_item = self.get_selected_item()
+        if selected_item is None:
+            messagebox.showwarning("Uyarı", "Önce bir grup veya klasör seçin!")
+            return
+
+        # Klasör mü grup mu?
+        if selected_item.get('type') == 'folder':
+            # Klasör düzenleme - basit dialog
+            dialog = ctk.CTkInputDialog(
+                text="Klasör adı:",
+                title="Klasör Düzenle"
+            )
+            dialog._entry.insert(0, selected_item.get('name', ''))
+            dialog._entry.select_range(0, 'end')
+
+            new_name = dialog.get_input()
+            if new_name and new_name.strip():
+                selected_item['name'] = new_name.strip()
+                self.refresh_group_list()
+                self.save_config(silent=True)
+            return
+
+        # Grup düzenleme
         group = self.get_selected_group()
         if group is None:
             messagebox.showwarning("Uyarı", "Önce bir grup seçin!")
@@ -3006,12 +3184,8 @@ Kullanım:
                     group_id = msg.get('group_id')
                     msg_type = msg.get('type')
 
-                    # Grup adını bul
-                    group_name = "Unknown"
-                    for g in self.groups:
-                        if g.get('id') == group_id:
-                            group_name = g.get('name', 'Unknown')
-                            break
+                    # Grup adını bul (OPTIMIZED: cache kullan, linear search yerine)
+                    group_name = self.get_group_name_by_id(group_id)
 
                     if msg_type == 'status':
                         status = msg.get('status')
@@ -3041,7 +3215,8 @@ Kullanım:
             except:
                 pass
 
-        self.root.after(50, self.check_status_queue)
+        # OPTIMIZATION: Reduced polling from 50ms (20Hz) to 100ms (10Hz) for better CPU usage
+        self.root.after(100, self.check_status_queue)
 
     # ==================== CONFIG ====================
 

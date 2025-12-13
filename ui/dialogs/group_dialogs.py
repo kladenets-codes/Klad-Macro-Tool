@@ -181,17 +181,43 @@ class AddGroupDialog:
         }
 
         # Seçili item'ı kontrol et - eğer klasör ise içine ekle
-        selected_item = self.manager.get_selected_item()
-        if selected_item and selected_item.get('type') == 'folder':
-            # Klasörün içine ekle
-            if 'items' not in selected_item:
-                selected_item['items'] = []
-            selected_item['items'].append(new_group)
-            # Klasörü expand et
-            selected_item['expanded'] = True
+        from core.config import find_item_by_id
+
+        # CRITICAL: selected_folder_id kullanarak doğrudan klasörü bul
+        if self.manager.selected_folder_id:
+            # Debug log
+            if self.manager.global_settings.get("debug_enabled", False):
+                self.manager.add_log(f"ADD_GROUP: selected_folder_id = {self.manager.selected_folder_id}", "DEBUG")
+
+            # Seçili klasörü ID ile bul
+            target_folder = find_item_by_id(self.manager.groups, self.manager.selected_folder_id)
+
+            if self.manager.global_settings.get("debug_enabled", False):
+                if target_folder:
+                    self.manager.add_log(f"ADD_GROUP: Found folder '{target_folder.get('name')}' (type={target_folder.get('type')})", "DEBUG")
+                else:
+                    self.manager.add_log(f"ADD_GROUP: No folder found with ID {self.manager.selected_folder_id}", "DEBUG")
+
+            if target_folder and target_folder.get('type') == 'folder':
+                # Klasörün içine ekle
+                if 'items' not in target_folder:
+                    target_folder['items'] = []
+                target_folder['items'].append(new_group)
+                # Klasörü expand et
+                target_folder['expanded'] = True
+
+                if self.manager.global_settings.get("debug_enabled", False):
+                    self.manager.add_log(f"ADD_GROUP: Added '{name}' to folder '{target_folder.get('name')}'", "DEBUG")
+            else:
+                # Root seviyesine ekle
+                self.manager.groups.append(new_group)
+                if self.manager.global_settings.get("debug_enabled", False):
+                    self.manager.add_log(f"ADD_GROUP: Added '{name}' to root (folder not valid)", "DEBUG")
         else:
-            # Root seviyesine ekle
+            # Root seviyesine ekle (klasör seçili değil)
             self.manager.groups.append(new_group)
+            if self.manager.global_settings.get("debug_enabled", False):
+                self.manager.add_log(f"ADD_GROUP: Added '{name}' to root (no folder selected)", "DEBUG")
 
         self.manager.refresh_group_list()
         self.manager.save_config(silent=True)

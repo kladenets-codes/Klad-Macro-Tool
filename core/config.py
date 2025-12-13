@@ -134,6 +134,20 @@ def save_config(
         True if successful, False otherwise
     """
     try:
+        # CRITICAL: Ensure all items have 'type' field before saving
+        def ensure_type_field(items):
+            """Recursively ensure all items have a type field"""
+            for item in items:
+                if 'type' not in item:
+                    # Eğer 'items' anahtarı varsa klasör, yoksa grup
+                    item['type'] = 'folder' if 'items' in item else 'group'
+
+                # If folder, recursively check children
+                if item.get('type') == 'folder':
+                    ensure_type_field(item.get('items', []))
+
+        ensure_type_field(groups)
+
         data = {
             "groups": groups,
             "global_settings": global_settings,
@@ -344,13 +358,36 @@ def insert_item_at(items: List[Dict], item: Dict, target_parent: List[Dict], tar
     Returns:
         True if successful, False otherwise
     """
-    # Remove from current location
+    # Get item ID
     item_id = item.get('id')
     if not item_id:
         return False
 
-    remove_item_by_id(items, item_id)
+    # CRITICAL FIX: Önce source parent'ı ve index'i bul
+    source_info = find_parent_and_index(items, item_id)
+    if not source_info:
+        return False
 
-    # Insert at new location
-    target_parent.insert(target_index, item)
+    source_parent, source_index = source_info
+
+    # Aynı parent içinde hareket mi?
+    if source_parent is target_parent:
+        # Aynı parent içinde move - index'i ayarla
+        if source_index < target_index:
+            # Önce çıkarıldığında target_index 1 azalır
+            adjusted_target = target_index - 1
+        else:
+            adjusted_target = target_index
+
+        # Remove from source
+        source_parent.pop(source_index)
+        # Insert at target
+        target_parent.insert(adjusted_target, item)
+    else:
+        # Farklı parent'lar arası move
+        # Remove from source
+        source_parent.pop(source_index)
+        # Insert at target
+        target_parent.insert(target_index, item)
+
     return True

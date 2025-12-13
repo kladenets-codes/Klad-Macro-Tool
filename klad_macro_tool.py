@@ -21,6 +21,7 @@ import tkinter as tk
 import cv2
 import numpy as np
 from pathlib import Path
+from PIL import Image, ImageTk
 import keyboard
 import time
 import multiprocessing
@@ -299,7 +300,7 @@ class ConfigManager:
         ).pack(pady=(0, 6))
 
         # Ekle button
-        ctk.CTkButton(
+        self.add_group_btn = ctk.CTkButton(
             button_column,
             text="➕",
             width=48,
@@ -311,10 +312,11 @@ class ConfigManager:
             font=ctk.CTkFont(size=20),
             anchor="center",
             command=self.add_group
-        ).pack(pady=(0, 4))
+        )
+        self.add_group_btn.pack(pady=(0, 4))
 
         # Düzenle button
-        ctk.CTkButton(
+        self.edit_group_btn = ctk.CTkButton(
             button_column,
             text="✏️",
             width=48,
@@ -326,10 +328,11 @@ class ConfigManager:
             font=ctk.CTkFont(size=20),
             anchor="center",
             command=self.edit_group
-        ).pack(pady=(0, 4))
+        )
+        self.edit_group_btn.pack(pady=(0, 4))
 
         # Sil button
-        ctk.CTkButton(
+        self.delete_group_btn = ctk.CTkButton(
             button_column,
             text="🗑",
             width=48,
@@ -341,7 +344,8 @@ class ConfigManager:
             font=ctk.CTkFont(size=22),
             anchor="center",
             command=self.delete_group
-        ).pack(pady=(0, 4))
+        )
+        self.delete_group_btn.pack(pady=(0, 4))
 
         # Klasör Ekle button
         ctk.CTkButton(
@@ -965,7 +969,7 @@ Kullanım:
         # Create edit dialog
         dialog = ctk.CTkToplevel(self.root)
         dialog.title("Klasörü Düzenle")
-        dialog.geometry("450x340")
+        dialog.geometry("450x420")
         dialog.transient(self.root)
         dialog.grab_set()
         dialog.resizable(False, False)
@@ -973,8 +977,8 @@ Kullanım:
         # Center window
         dialog.update_idletasks()
         x = (dialog.winfo_screenwidth() // 2) - (450 // 2)
-        y = (dialog.winfo_screenheight() // 2) - (340 // 2)
-        dialog.geometry(f"450x340+{x}+{y}")
+        y = (dialog.winfo_screenheight() // 2) - (420 // 2)
+        dialog.geometry(f"450x420+{x}+{y}")
 
         main = ctk.CTkFrame(dialog, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=30, pady=20)
@@ -1095,6 +1099,10 @@ Kullanım:
         def cancel():
             dialog.destroy()
 
+        def delete_folder():
+            dialog.destroy()
+            self._delete_folder_with_options(folder_id)
+
         ctk.CTkButton(
             btn_frame,
             text="✓ Kaydet",
@@ -1120,9 +1128,188 @@ Kullanım:
             command=cancel
         ).pack(side="left")
 
+        # Delete folder button (placed below other buttons)
+        delete_frame = ctk.CTkFrame(main, fg_color="transparent")
+        delete_frame.pack(pady=(15, 0))
+
+        ctk.CTkButton(
+            delete_frame,
+            text="🗑 Klasörü Sil",
+            width=250,
+            height=35,
+            corner_radius=8,
+            fg_color="#8B0000",
+            hover_color="#A52A2A",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=delete_folder
+        ).pack()
+
         # Enter to save
         name_entry.bind('<Return>', lambda e: save())
         name_entry.bind('<Escape>', lambda e: cancel())
+
+    def _delete_folder_with_options(self, folder_id):
+        """Delete folder with options for handling groups inside"""
+        folder = find_item_by_id(self.groups, folder_id)
+        if not folder:
+            return
+
+        # Check if folder has items inside
+        items_inside = folder.get('items', [])
+        groups_inside = [item for item in items_inside if item.get('type') == 'group']
+
+        if not groups_inside:
+            # No groups inside, just confirm deletion
+            if messagebox.askyesno("Klasör Sil", f"'{folder['name']}' klasörünü silmek istediğinize emin misiniz?"):
+                remove_item_by_id(self.groups, folder_id)
+                self.selected_folder_id = None
+                self.refresh_group_list()
+                self.update_group_details()
+                self.save_config(silent=True)
+            return
+
+        # Folder has groups inside, show options dialog
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("Klasörü Sil")
+        dialog.geometry("450x300")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        # Center window
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (450 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (300 // 2)
+        dialog.geometry(f"450x300+{x}+{y}")
+
+        main = ctk.CTkFrame(dialog, fg_color="transparent")
+        main.pack(fill="both", expand=True, padx=30, pady=20)
+
+        ctk.CTkLabel(
+            main,
+            text="🗑 Klasörü Sil",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color="#FF6B6B"
+        ).pack(pady=(0, 10))
+
+        # Warning message
+        warning_frame = ctk.CTkFrame(main, fg_color="#3d2a2a", corner_radius=10)
+        warning_frame.pack(fill="x", pady=(0, 15), padx=10)
+
+        ctk.CTkLabel(
+            warning_frame,
+            text=f"⚠ '{folder['name']}' klasörü içinde {len(groups_inside)} grup var!",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#FFA500",
+            wraplength=360
+        ).pack(pady=10, padx=10)
+
+        # Options label
+        ctk.CTkLabel(
+            main,
+            text="Gruplar ne olsun? (Birini seçmelisiniz)",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#aaaaaa"
+        ).pack(pady=(0, 10))
+
+        # Radio buttons for options
+        selected_option = tk.StringVar(value="")
+
+        options_frame = ctk.CTkFrame(main, fg_color="#2a2a3e", corner_radius=10)
+        options_frame.pack(fill="x", pady=(0, 15), padx=10)
+
+        ctk.CTkRadioButton(
+            options_frame,
+            text="🗑 İçindeki grupları da sil",
+            variable=selected_option,
+            value="delete_groups",
+            font=ctk.CTkFont(size=12),
+            text_color="#FFFFFF",
+            fg_color=self.colors["accent"],
+            hover_color=self.colors["accent_hover"]
+        ).pack(pady=10, padx=15, anchor="w")
+
+        ctk.CTkRadioButton(
+            options_frame,
+            text="📤 İçindeki grupları dışarı çıkart",
+            variable=selected_option,
+            value="move_groups_out",
+            font=ctk.CTkFont(size=12),
+            text_color="#FFFFFF",
+            fg_color=self.colors["accent"],
+            hover_color=self.colors["accent_hover"]
+        ).pack(pady=(0, 10), padx=15, anchor="w")
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(main, fg_color="transparent")
+        btn_frame.pack(pady=(10, 0))
+
+        def confirm_delete():
+            option = selected_option.get()
+            if not option:
+                messagebox.showwarning("Uyarı", "Lütfen bir seçenek seçin!")
+                return
+
+            if option == "move_groups_out":
+                # Move groups out of folder to parent level
+                parent_result = find_parent_and_index(self.groups, folder_id)
+                if parent_result:
+                    parent_list, folder_index = parent_result
+
+                    # Insert groups at the folder's position
+                    for i, group in enumerate(groups_inside):
+                        parent_list.insert(folder_index + i, group)
+
+                    # Remove the folder
+                    remove_item_by_id(self.groups, folder_id)
+                else:
+                    # Folder is at root level
+                    folder_index = next((i for i, item in enumerate(self.groups) if item.get('id') == folder_id), None)
+                    if folder_index is not None:
+                        # Insert groups at folder's position
+                        for i, group in enumerate(groups_inside):
+                            self.groups.insert(folder_index + i, group)
+                        # Remove the folder
+                        self.groups.pop(folder_index + len(groups_inside))
+
+            else:  # delete_groups
+                # Just delete the folder with all its contents
+                remove_item_by_id(self.groups, folder_id)
+
+            self.selected_folder_id = None
+            self.refresh_group_list()
+            self.update_group_details()
+            self.save_config(silent=True)
+            dialog.destroy()
+
+        def cancel():
+            dialog.destroy()
+
+        ctk.CTkButton(
+            btn_frame,
+            text="✓ Onayla",
+            width=120,
+            height=35,
+            corner_radius=8,
+            fg_color="#8B0000",
+            hover_color="#A52A2A",
+            text_color="#FFFFFF",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=confirm_delete
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            btn_frame,
+            text="✗ İptal",
+            width=120,
+            height=35,
+            corner_radius=8,
+            fg_color=self.colors["bg_dark"],
+            hover_color=self.colors["border"],
+            font=ctk.CTkFont(size=12),
+            command=cancel
+        ).pack(side="left")
 
     # ==================== DRAG & DROP ====================
 
@@ -2156,17 +2343,17 @@ Kullanım:
         drag_handle.pack(side="left", padx=(0, 8))
         card._drag_handle = drag_handle
 
-        # Color indicator
-        color_indicator = ctk.CTkFrame(
+        # Image preview
+        image_preview = ctk.CTkLabel(
             content,
-            width=5,
+            text="",
+            width=40,
             height=40,
-            corner_radius=2,
-            fg_color="#00ff88"
+            fg_color=self.colors["bg_secondary"],
+            corner_radius=4
         )
-        color_indicator.pack(side="left", padx=(0, 12))
-        color_indicator.pack_propagate(False)
-        card._color_indicator = color_indicator
+        image_preview.pack(side="left", padx=(0, 12))
+        card._image_preview = image_preview
 
         # Info frame
         info_frame = ctk.CTkFrame(content, fg_color="transparent")
@@ -2238,8 +2425,28 @@ Kullanım:
         card._drag_handle.bind("<B1-Motion>", lambda e, c=card: self.template_drag_motion(e, c))
         card._drag_handle.bind("<ButtonRelease-1>", lambda e, c=card: self.template_drag_end(e, c))
 
-        # Color indicator güncelle
-        card._color_indicator.configure(fg_color=template.get("color", "#00ff88"))
+        # Image preview güncelle
+        image_filename = template.get("image", "")
+        if image_filename:
+            image_path = IMAGES_FOLDER / image_filename
+            if image_path.exists():
+                try:
+                    # Görseli yükle ve CTkImage oluştur
+                    pil_image = Image.open(image_path)
+                    ctk_image = ctk.CTkImage(light_image=pil_image, dark_image=pil_image, size=(40, 40))
+
+                    # Label'a resmi ekle
+                    card._image_preview.configure(image=ctk_image, text="")
+                    card._image_preview._ctk_image = ctk_image  # Referansı tut
+                except Exception:
+                    # Hata durumunda "?" göster
+                    card._image_preview.configure(image=None, text="?", text_color=self.colors["text_secondary"])
+            else:
+                # Dosya yoksa "?" göster
+                card._image_preview.configure(image=None, text="?", text_color=self.colors["text_secondary"])
+        else:
+            # Image belirtilmemişse boş bırak
+            card._image_preview.configure(image=None, text="", text_color=self.colors["text_secondary"])
 
         # Name label güncelle
         name_color = "#000000" if is_selected else (self.colors["text"] if is_enabled else self.colors["text_secondary"])
@@ -2257,7 +2464,7 @@ Kullanım:
             card._switch.deselect()
 
         # Click handlers
-        for widget in [card, card._content, card._info_frame, card._name_label, card._key_label]:
+        for widget in [card, card._content, card._info_frame, card._name_label, card._key_label, card._image_preview]:
             widget.bind("<Button-1>", lambda e, idx=index: self.select_template(idx))
 
     def _on_template_switch_toggle(self, index, switch):
@@ -3039,9 +3246,10 @@ Kullanım:
 
     def create_indicator(self, group_id, index):
         """Create indicator window for a group"""
-        # Grup adını bul
+        # Grup adını bul (flatten ile iç içe yapıları da kontrol et)
         group_name = ""
-        for g in self.groups:
+        all_groups = flatten_groups(self.groups)
+        for g in all_groups:
             if g.get('id') == group_id:
                 group_name = g.get('name', '')[:12]  # Max 12 karakter
                 break

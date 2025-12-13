@@ -2426,7 +2426,7 @@ Kullanım:
         card._drag_handle.bind("<ButtonRelease-1>", lambda e, c=card: self.template_drag_end(e, c))
 
         # Image preview güncelle
-        image_filename = template.get("image", "")
+        image_filename = template.get("file", "") or template.get("image", "")
         if image_filename:
             image_path = IMAGES_FOLDER / image_filename
             if image_path.exists():

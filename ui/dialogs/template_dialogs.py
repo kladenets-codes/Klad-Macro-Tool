@@ -239,7 +239,10 @@ class TemplateFinalizeDialog:
         ctk.CTkLabel(name_row, text="İsim:", width=70).pack(side="left")
         self.name_entry = ctk.CTkEntry(name_row, width=200, height=32)
         self.name_entry.pack(side="left", padx=10)
-        self.name_entry.insert(0, f"template_{len(self.manager.groups[self.manager.selected_group_index].get('templates', [])) + 1}")
+        # Get selected group (folder-safe way)
+        selected_group = self.manager.get_selected_group()
+        template_count = len(selected_group.get('templates', [])) + 1 if selected_group else 1
+        self.name_entry.insert(0, f"template_{template_count}")
 
         # Key combo
         key_row = ctk.CTkFrame(main, fg_color="transparent")
@@ -379,10 +382,16 @@ class TemplateFinalizeDialog:
             "macro": []
         }
 
-        if 'templates' not in self.manager.groups[self.manager.selected_group_index]:
-            self.manager.groups[self.manager.selected_group_index]['templates'] = []
+        # Get selected group (folder-safe way)
+        selected_group = self.manager.get_selected_group()
+        if selected_group is None:
+            messagebox.showerror("Hata", "Seçili grup bulunamadı!")
+            return
 
-        self.manager.groups[self.manager.selected_group_index]['templates'].append(new_template)
+        if 'templates' not in selected_group:
+            selected_group['templates'] = []
+
+        selected_group['templates'].append(new_template)
         self.manager.refresh_template_list()
 
         self.top.destroy()
@@ -1000,7 +1009,13 @@ class EditTemplateDialog:
         self.template['use_macro'] = self.use_macro_var.get()
         self.template['macro'] = self.macro_list
 
-        self.manager.groups[self.manager.selected_group_index]['templates'][self.index] = self.template
+        # Get selected group (folder-safe way)
+        selected_group = self.manager.get_selected_group()
+        if selected_group is None:
+            messagebox.showerror("Hata", "Seçili grup bulunamadı!")
+            return
+
+        selected_group['templates'][self.index] = self.template
         self.manager.refresh_template_list()
         self.top.destroy()
 

@@ -125,6 +125,11 @@ class ConfigManager:
         self.group_card_pool = []  # Reusable group cards
         self.template_card_pool = []  # Reusable template cards
 
+        # Performance caches
+        self._group_id_to_name_cache = {}  # Cache for fast group ID -> name lookup
+        self._flattened_groups_cache = None  # Cache for flattened groups list
+        self._cache_dirty = True  # Flag to invalidate caches
+
         # Drag & drop state for groups/folders
         self.item_drag_data = {
             'active': False,

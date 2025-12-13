@@ -56,6 +56,12 @@ from core import (
     generate_export_code,
     parse_import_code,
     get_default_group,
+    get_default_folder,
+    flatten_groups,
+    find_item_by_id,
+    remove_item_by_id,
+    find_parent_and_index,
+    insert_item_at,
 )
 
 # UI module imports - lazy loaded for faster startup
@@ -113,10 +119,21 @@ class ConfigManager:
         # UI state
         self.selected_group_index = None
         self.selected_template_index = None
+        self.selected_folder_id = None  # Seçili klasörün ID'si (grup eklerken klasör içine eklemek için)
 
         # Widget pools for reuse
         self.group_card_pool = []  # Reusable group cards
         self.template_card_pool = []  # Reusable template cards
+
+        # Drag & drop state for groups/folders
+        self.item_drag_data = {
+            'active': False,
+            'item': None,  # Item being dragged (group or folder dict)
+            'source_parent': None,  # Parent list where item came from
+            'source_index': None  # Index in source parent
+        }
+        self.item_drop_indicator = None
+        self.drag_preview_window = None  # Floating preview window during drag
 
         # Indicator windows
         self.indicator_windows = {}  # group_id -> (window, label)
@@ -231,114 +248,171 @@ class ConfigManager:
         main_container = ctk.CTkFrame(groups_tab, fg_color="transparent")
         main_container.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Left panel - Group list
-        left_panel = ctk.CTkFrame(main_container, fg_color=self.colors["bg_secondary"], corner_radius=12, width=280)
+        # Left panel - Group list (wider for better visibility)
+        left_panel = ctk.CTkFrame(main_container, fg_color=self.colors["bg_secondary"], corner_radius=12, width=360)
         left_panel.pack(side="left", fill="y", padx=(0, 10))
         left_panel.pack_propagate(False)
 
-        # Group list header
+        # Sol panel içinde 2 sütun oluştur
+        left_panel_content = ctk.CTkFrame(left_panel, fg_color="transparent")
+        left_panel_content.pack(fill="both", expand=True, padx=8, pady=8)
+
+        # 1. Sütun (Sol): Butonlar - %15 genişlik (54px = 360 * 0.15)
+        button_column = ctk.CTkFrame(left_panel_content, fg_color="transparent", width=54)
+        button_column.pack(side="left", fill="y", padx=(0, 6))
+        button_column.pack_propagate(False)
+
+        # 2. Sütun (Sağ): Gruplar - %85 genişlik
+        groups_column = ctk.CTkFrame(left_panel_content, fg_color="transparent")
+        groups_column.pack(side="left", fill="both", expand=True)
+
+        # Group list header (sağ sütunda)
         ctk.CTkLabel(
-            left_panel,
+            groups_column,
             text="📁 Gruplar",
             font=ctk.CTkFont(size=14, weight="bold"),
             text_color=self.colors["text"]
-        ).pack(anchor="w", padx=15, pady=(15, 10))
+        ).pack(anchor="w", padx=8, pady=(8, 10))
 
-        # Group list
+        # Group list (sağ sütunda)
         self.group_scroll = ctk.CTkScrollableFrame(
-            left_panel,
+            groups_column,
             fg_color="transparent",
             scrollbar_button_color=self.colors["accent"],
             scrollbar_button_hover_color=self.colors["accent_hover"]
         )
-        self.group_scroll.pack(fill="both", expand=True, padx=8, pady=5)
+        self.group_scroll.pack(fill="both", expand=True, padx=0, pady=5)
 
-        # Group buttons
-        group_btn_frame = ctk.CTkFrame(left_panel, fg_color="transparent", height=50)
-        group_btn_frame.pack(fill="x", padx=15, pady=12)
 
-        self.add_group_btn = ctk.CTkButton(
-            group_btn_frame,
-            text="+  Yeni",
-            width=75,
-            height=32,
-            corner_radius=8,
+        # --- GRUPLAR Section (Sol sütunda - button_column) ---
+        # GRUPLAR title
+        ctk.CTkLabel(
+            button_column,
+            text="GRUPLAR",
+            font=ctk.CTkFont(size=9, weight="bold"),
+            text_color=self.colors["text_secondary"]
+        ).pack(pady=(0, 6))
+
+        # Ekle button
+        ctk.CTkButton(
+            button_column,
+            text="➕",
+            width=48,
+            height=36,
+            corner_radius=6,
             fg_color=self.colors["accent"],
             hover_color=self.colors["accent_hover"],
             text_color="#000000",
-            font=ctk.CTkFont(size=12, weight="bold"),
-            command=self.add_group
-        )
-        self.add_group_btn.pack(side="left", padx=(0, 6))
-
-        self.edit_group_btn = ctk.CTkButton(
-            group_btn_frame,
-            text=" ✏️",
-            width=40,
-            height=32,
-            corner_radius=8,
-            fg_color=self.colors["bg_dark"],
-            hover_color=self.colors["border"],
-            font=ctk.CTkFont(size=13),
-            command=self.edit_group
-        )
-        self.edit_group_btn.pack(side="left", padx=(0, 6))
-
-        self.delete_group_btn = ctk.CTkButton(
-            group_btn_frame,
-            text=" 🗑",
-            width=40,
-            height=32,
-            corner_radius=8,
-            fg_color=self.colors["danger"],
-            hover_color="#cc3a47",
-            font=ctk.CTkFont(size=13),
-            command=self.delete_group
-        )
-        self.delete_group_btn.pack(side="left")
-
-        # Import/Export buttons
-        ie_btn_frame = ctk.CTkFrame(left_panel, fg_color="transparent", height=40)
-        ie_btn_frame.pack(fill="x", padx=15, pady=(0, 12))
-
-        ctk.CTkButton(
-            ie_btn_frame,
-            text="Export",
-            width=80,
-            height=28,
-            corner_radius=6,
-            fg_color="#2d5a27",
-            hover_color="#3d7a37",
-            font=ctk.CTkFont(size=11),
+            font=ctk.CTkFont(size=20),
             anchor="center",
-            command=self.export_group
-        ).pack(side="left", padx=(0, 6))
+            command=self.add_group
+        ).pack(pady=(0, 4))
 
+        # Düzenle button
         ctk.CTkButton(
-            ie_btn_frame,
-            text="Import",
-            width=80,
-            height=28,
+            button_column,
+            text="✏️",
+            width=48,
+            height=36,
             corner_radius=6,
-            fg_color="#5a4a27",
-            hover_color="#7a6a47",
-            font=ctk.CTkFont(size=11),
+            fg_color="#3a3a4e",
+            hover_color="#4a4a5e",
+            text_color="#ffffff",
+            font=ctk.CTkFont(size=20),
+            anchor="center",
+            command=self.edit_group
+        ).pack(pady=(0, 4))
+
+        # Sil button
+        ctk.CTkButton(
+            button_column,
+            text="🗑",
+            width=48,
+            height=36,
+            corner_radius=6,
+            fg_color=self.colors["danger"],
+            hover_color="#d93a47",
+            text_color="#ffffff",
+            font=ctk.CTkFont(size=22),
+            anchor="center",
+            command=self.delete_group
+        ).pack(pady=(0, 4))
+
+        # Klasör Ekle button
+        ctk.CTkButton(
+            button_column,
+            text="📁",
+            width=48,
+            height=36,
+            corner_radius=6,
+            fg_color="#6b5b3d",
+            hover_color="#8b7b5d",
+            text_color="#ffffff",
+            font=ctk.CTkFont(size=20),
+            anchor="center",
+            command=self.add_folder
+        ).pack(pady=(0, 8))
+
+        # Separator
+        ctk.CTkFrame(
+            button_column,
+            fg_color=self.colors["border"],
+            height=2
+        ).pack(fill="x", pady=(0, 8))
+
+        # --- IMPORT Section ---
+        # IMPORT title
+        ctk.CTkLabel(
+            button_column,
+            text="IMPORT",
+            font=ctk.CTkFont(size=9, weight="bold"),
+            text_color=self.colors["text_secondary"]
+        ).pack(pady=(0, 6))
+
+        # Import button
+        ctk.CTkButton(
+            button_column,
+            text="📥",
+            width=48,
+            height=36,
+            corner_radius=6,
+            fg_color="#6b5b3d",
+            hover_color="#8b7b5d",
+            text_color="#ffffff",
+            font=ctk.CTkFont(size=20),
             anchor="center",
             command=self.import_group
-        ).pack(side="left", padx=(0, 6))
+        ).pack(pady=(0, 4))
 
+        # Export button
         ctk.CTkButton(
-            ie_btn_frame,
-            text="Presets",
-            width=80,
-            height=28,
+            button_column,
+            text="📤",
+            width=48,
+            height=36,
             corner_radius=6,
-            fg_color="#4a3a6a",
-            hover_color="#6a5a8a",
-            font=ctk.CTkFont(size=11),
+            fg_color="#2d6a2d",
+            hover_color="#3d8a3d",
+            text_color="#ffffff",
+            font=ctk.CTkFont(size=20),
+            anchor="center",
+            command=self.export_group
+        ).pack(pady=(0, 4))
+
+        # Presets button
+        ctk.CTkButton(
+            button_column,
+            text="⚙️",
+            width=48,
+            height=36,
+            corner_radius=6,
+            fg_color="#5a4a7a",
+            hover_color="#7a6a9a",
+            text_color="#ffffff",
+            font=ctk.CTkFont(size=20),
             anchor="center",
             command=self.open_presets
-        ).pack(side="left")
+        ).pack(pady=(0, 4))
 
         # Right panel - Group details
         right_panel = ctk.CTkFrame(main_container, fg_color="transparent")
@@ -351,13 +425,21 @@ class ConfigManager:
         self.group_details_content = ctk.CTkFrame(self.group_details_frame, fg_color="transparent")
         self.group_details_content.pack(fill="x", padx=20, pady=15)
 
-        self.group_name_label = ctk.CTkLabel(
+        # Selected group indicator with background
+        self.group_name_container = ctk.CTkFrame(
             self.group_details_content,
+            fg_color=self.colors["bg_dark"],
+            corner_radius=8
+        )
+        self.group_name_container.pack(fill="x", pady=(0, 10))
+
+        self.group_name_label = ctk.CTkLabel(
+            self.group_name_container,
             text="Bir grup seçin...",
-            font=ctk.CTkFont(size=18, weight="bold"),
+            font=ctk.CTkFont(size=16, weight="bold"),
             text_color=self.colors["text"]
         )
-        self.group_name_label.pack(anchor="w")
+        self.group_name_label.pack(anchor="w", padx=12, pady=8)
 
         self.group_info_label = ctk.CTkLabel(
             self.group_details_content,
@@ -701,35 +783,831 @@ Kullanım:
     # ==================== GROUP MANAGEMENT ====================
 
     def refresh_group_list(self):
-        """Refresh the group list with widget reuse"""
-        existing_cards = [w for w in self.group_scroll.winfo_children()
-                         if isinstance(w, ctk.CTkFrame) and hasattr(w, '_group_index')]
+        """Refresh the group list (supports nested folders)"""
+        # Clear existing widgets
+        for widget in self.group_scroll.winfo_children():
+            widget.pack_forget()
 
         # Çakışan key'leri bir kez hesapla
         conflicting_keys = self.get_conflicting_keys()
 
-        # Gerekli kart sayısı
-        needed = len(self.groups)
+        # Render items recursively
+        self._render_items(self.groups, level=0, conflicting_keys=conflicting_keys, parent_widget=self.group_scroll, parent_folder=None)
 
-        # Fazla kartları pool'a taşı
-        while len(existing_cards) > needed:
-            card = existing_cards.pop()
-            card.pack_forget()
-            self.group_card_pool.append(card)
+    def _render_items(self, items, level, conflicting_keys, parent_widget=None, parent_list=None, parent_folder=None):
+        """Recursively render items (groups and folders)"""
+        if parent_list is None:
+            parent_list = items
+        if parent_widget is None:
+            parent_widget = self.group_scroll
 
-        # Eksik kartları oluştur veya pool'dan al
-        while len(existing_cards) < needed:
-            if self.group_card_pool:
-                card = self.group_card_pool.pop()
-            else:
-                card = self._create_empty_group_card()
-            existing_cards.append(card)
+        for i, item in enumerate(items):
+            item_type = item.get('type', 'group')
 
-        # Tüm kartları güncelle
-        for i, group in enumerate(self.groups):
-            card = existing_cards[i]
-            self._update_group_card(card, i, group, conflicting_keys)
-            card.pack(fill="x", pady=4, padx=4)
+            if item_type == 'folder':
+                self._render_folder(item, level, i, parent_list, conflicting_keys, parent_folder, parent_widget)
+            else:  # group
+                self._render_group(item, level, i, conflicting_keys, parent_list, parent_folder, parent_widget)
+
+    def _render_folder(self, folder, level, index, parent_list, conflicting_keys, parent_folder, parent_widget):
+        """Render a folder card with border container"""
+        is_selected = folder.get('id') == self.selected_folder_id
+        is_expanded = folder.get('expanded', True)
+
+        # Get folder colors (default to gold theme if not set)
+        folder_bg = folder.get('color_bg', '#3a3a4e')
+        folder_fg = folder.get('color_fg', '#ffcc00')
+
+        # Create container frame with border (klasör renginde çerçeve)
+        container = ctk.CTkFrame(
+            parent_widget,
+            fg_color="transparent",
+            border_width=2,
+            border_color=folder_fg,  # Klasör rengi border
+            corner_radius=10
+        )
+        container.pack(fill="x", pady=4, padx=(4 + level * 20, 4))
+
+        # Create folder header card inside container
+        card = ctk.CTkFrame(
+            container,
+            fg_color=self.colors["accent"] if is_selected else folder_bg,
+            corner_radius=8,
+            height=55
+        )
+        card.pack(fill="x", pady=5, padx=5)
+        card.pack_propagate(False)
+
+        # Store metadata for drag & drop
+        card._item_data = {
+            'item': folder,
+            'parent_list': parent_list,
+            'index': index,
+            'level': level
+        }
+
+        content = ctk.CTkFrame(card, fg_color="transparent")
+        content.pack(fill="both", expand=True, padx=10, pady=8)
+
+        # Drag handle
+        drag_handle = ctk.CTkLabel(
+            content,
+            text="≡",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=self.colors["text_secondary"],
+            width=20,
+            cursor="hand2"
+        )
+        drag_handle.pack(side="left", padx=(0, 8))
+
+        # Expand/collapse button - daha belirgin
+        expand_icon = "▼" if is_expanded else "▶"
+        expand_btn = ctk.CTkButton(
+            content,
+            text=expand_icon,
+            width=28,
+            height=28,
+            fg_color="#444444",
+            hover_color="#555555",
+            text_color="#ffffff",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            corner_radius=4
+        )
+        expand_btn.pack(side="left", padx=(0, 8))
+
+        # Get folder ID first (needed for buttons)
+        folder_id = folder.get('id')
+
+        # Folder icon + name - daha güzel
+        folder_label = ctk.CTkLabel(
+            content,
+            text=f"📁  {folder.get('name', 'Unnamed Folder')}",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#ffffff" if is_selected else folder_fg,  # Use saved color
+            anchor="w"
+        )
+        folder_label.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        # Item count badge - küçük
+        item_count = len(folder.get('items', []))
+        count_label = ctk.CTkLabel(
+            content,
+            text=f"{item_count}",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="#aaaaaa",
+            fg_color="#3a3a4e",
+            corner_radius=10,
+            width=24,
+            height=20
+        )
+        count_label.pack(side="right", padx=(6, 0))
+
+        # Edit button for folder
+        edit_btn = ctk.CTkButton(
+            content,
+            text="✏️",
+            width=28,
+            height=28,
+            corner_radius=6,
+            fg_color="#444444",
+            hover_color="#555555",
+            text_color="#ffffff",
+            font=ctk.CTkFont(size=12),
+            command=lambda fid=folder_id: self._edit_folder(fid)
+        )
+        edit_btn.pack(side="right", padx=(0, 0))
+
+        # Bind events
+        expand_btn.configure(command=lambda fid=folder_id: self._toggle_folder(fid))
+
+        # Selection events - klasöre tıklandığında seç
+        for widget in [card, content, folder_label, count_label]:
+            widget.bind('<Button-1>', lambda _, fid=folder_id: self.select_folder(fid))
+
+        # Drag & drop events
+        drag_handle.bind('<Button-1>', lambda e, item=folder, plist=parent_list: self._item_drag_start(e, item, plist))
+        drag_handle.bind('<B1-Motion>', self._item_drag_motion)
+        drag_handle.bind('<ButtonRelease-1>', self._item_drag_end)
+
+        # Render children if expanded
+        if is_expanded:
+            children = folder.get('items', [])
+            if children:
+                conflicting_keys = self.get_conflicting_keys()
+                # Render children inside the container (klasör border'ı içinde)
+                self._render_items(children, level + 1, conflicting_keys, parent_widget=container, parent_list=children, parent_folder=folder)
+
+    def _toggle_folder(self, folder_id):
+        """Toggle folder expanded state"""
+        folder = find_item_by_id(self.groups, folder_id)
+        if folder:
+            folder['expanded'] = not folder.get('expanded', True)
+            self.refresh_group_list()
+
+    def _edit_folder(self, folder_id):
+        """Edit folder name and color"""
+        folder = find_item_by_id(self.groups, folder_id)
+        if not folder:
+            return
+
+        # Create edit dialog
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("Klasörü Düzenle")
+        dialog.geometry("450x340")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        # Center window
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (450 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (340 // 2)
+        dialog.geometry(f"450x340+{x}+{y}")
+
+        main = ctk.CTkFrame(dialog, fg_color="transparent")
+        main.pack(fill="both", expand=True, padx=30, pady=20)
+
+        ctk.CTkLabel(
+            main,
+            text="📁 Klasörü Düzenle",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color=self.colors["accent"]
+        ).pack(pady=(0, 15))
+
+        # Name input
+        name_frame = ctk.CTkFrame(main, fg_color="transparent")
+        name_frame.pack(fill="x", pady=(0, 12))
+
+        ctk.CTkLabel(
+            name_frame,
+            text="Klasör Adı:",
+            width=90,
+            anchor="w"
+        ).pack(side="left")
+
+        name_entry = ctk.CTkEntry(
+            name_frame,
+            width=290,
+            height=35,
+            font=ctk.CTkFont(size=12)
+        )
+        name_entry.pack(side="left", padx=10)
+        name_entry.insert(0, folder.get('name', ''))
+        name_entry.select_range(0, 'end')
+        name_entry.focus_set()
+
+        # Color selection
+        color_frame = ctk.CTkFrame(main, fg_color="#2a2a3e", corner_radius=10)
+        color_frame.pack(fill="x", pady=(0, 15), ipady=8)
+
+        ctk.CTkLabel(
+            color_frame,
+            text="Klasör Rengi:",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#aaaaaa"
+        ).pack(pady=(5, 8))
+
+        # Predefined color options
+        colors_container = ctk.CTkFrame(color_frame, fg_color="transparent")
+        colors_container.pack(pady=(0, 5))
+
+        color_options = [
+            {"name": "Altın", "bg": "#6b5b3d", "fg": "#ffcc00"},
+            {"name": "Mavi", "bg": "#2d4a6a", "fg": "#5a9eff"},
+            {"name": "Yeşil", "bg": "#2d5a2d", "fg": "#5aff5a"},
+            {"name": "Mor", "bg": "#4a3a6a", "fg": "#aa7aff"},
+            {"name": "Kırmızı", "bg": "#5a2d2d", "fg": "#ff6a6a"},
+            {"name": "Turuncu", "bg": "#5a4a2d", "fg": "#ffaa4a"},
+            {"name": "Pembe", "bg": "#5a2d4a", "fg": "#ff7aaa"},
+            {"name": "Cyan", "bg": "#2d5a5a", "fg": "#5affff"},
+        ]
+
+        selected_color = tk.StringVar(value=folder.get('color_bg', "#6b5b3d"))
+        selected_color_fg = tk.StringVar(value=folder.get('color_fg', "#ffcc00"))
+        color_buttons = []
+
+        # Create color buttons in 2 rows
+        for i, color_opt in enumerate(color_options):
+            if i % 4 == 0:
+                row_frame = ctk.CTkFrame(colors_container, fg_color="transparent")
+                row_frame.pack(pady=2)
+
+            def make_color_select(bg, fg):
+                def select():
+                    selected_color.set(bg)
+                    selected_color_fg.set(fg)
+                    # Update all buttons
+                    for btn_data in color_buttons:
+                        if btn_data["bg"] == bg:
+                            btn_data["btn"].configure(border_width=3, border_color=self.colors["accent"])
+                        else:
+                            btn_data["btn"].configure(border_width=1, border_color="#555555")
+                return select
+
+            is_selected = color_opt["bg"] == folder.get('color_bg', "#6b5b3d")
+
+            btn = ctk.CTkButton(
+                row_frame,
+                text=color_opt["name"],
+                width=98,
+                height=30,
+                corner_radius=8,
+                fg_color=color_opt["bg"],
+                hover_color=color_opt["bg"],
+                text_color=color_opt["fg"],
+                font=ctk.CTkFont(size=10, weight="bold"),
+                border_width=3 if is_selected else 1,
+                border_color=self.colors["accent"] if is_selected else "#555555",
+                command=make_color_select(color_opt["bg"], color_opt["fg"])
+            )
+            btn.pack(side="left", padx=2)
+            color_buttons.append({"btn": btn, "bg": color_opt["bg"]})
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(main, fg_color="transparent")
+        btn_frame.pack(pady=(10, 0))
+
+        def save():
+            new_name = name_entry.get().strip()
+            if not new_name:
+                messagebox.showwarning("Uyarı", "Klasör adı boş olamaz!")
+                return
+
+            folder['name'] = new_name
+            folder['color_bg'] = selected_color.get()
+            folder['color_fg'] = selected_color_fg.get()
+            self.refresh_group_list()
+            self.save_config(silent=True)
+            dialog.destroy()
+
+        def cancel():
+            dialog.destroy()
+
+        ctk.CTkButton(
+            btn_frame,
+            text="✓ Kaydet",
+            width=120,
+            height=35,
+            corner_radius=8,
+            fg_color=self.colors["accent"],
+            hover_color=self.colors["accent_hover"],
+            text_color="#000000",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=save
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            btn_frame,
+            text="✗ İptal",
+            width=120,
+            height=35,
+            corner_radius=8,
+            fg_color=self.colors["bg_dark"],
+            hover_color=self.colors["border"],
+            font=ctk.CTkFont(size=12),
+            command=cancel
+        ).pack(side="left")
+
+        # Enter to save
+        name_entry.bind('<Return>', lambda e: save())
+        name_entry.bind('<Escape>', lambda e: cancel())
+
+    # ==================== DRAG & DROP ====================
+
+    def _item_drag_start(self, event, item, parent_list):
+        """Start dragging an item"""
+        # Find the card widget
+        widget = event.widget
+        while widget and not hasattr(widget, '_item_data'):
+            widget = widget.master
+            if widget is None or widget == self.root:
+                # Couldn't find card widget - silently return
+                return
+
+        if widget and hasattr(widget, '_item_data'):
+            data = widget._item_data
+            self.item_drag_data = {
+                'active': True,
+                'item': data['item'],
+                'parent_list': data['parent_list'],
+                'index': data['index'],
+                'widget': widget,
+                'start_y': event.y_root
+            }
+
+            # Create drag preview window
+            self._create_drag_preview(event, data['item'])
+
+    def _create_drag_preview(self, event, item):
+        """Create a floating preview window that follows the cursor"""
+        if self.drag_preview_window:
+            self.drag_preview_window.destroy()
+
+        # Create a toplevel window without decorations
+        preview = ctk.CTkToplevel(self.root)
+        preview.withdraw()  # Hide initially
+        preview.overrideredirect(True)  # No window decorations
+        preview.attributes('-topmost', True)  # Always on top
+        preview.attributes('-alpha', 0.8)  # Semi-transparent
+
+        # Create preview content based on item type
+        if item.get('type') == 'folder':
+            # Folder preview
+            frame = ctk.CTkFrame(
+                preview,
+                fg_color="#3a3a4e",
+                corner_radius=10,
+                border_width=2,
+                border_color=self.colors["accent"]
+            )
+            frame.pack(padx=0, pady=0)
+
+            content = ctk.CTkFrame(frame, fg_color="transparent")
+            content.pack(padx=10, pady=8)
+
+            label = ctk.CTkLabel(
+                content,
+                text=f"📁  {item.get('name', 'Folder')}",
+                font=ctk.CTkFont(size=13, weight="bold"),
+                text_color="#ffcc00"
+            )
+            label.pack(side="left")
+        else:
+            # Group preview
+            frame = ctk.CTkFrame(
+                preview,
+                fg_color=self.colors["bg_dark"],
+                corner_radius=10,
+                border_width=2,
+                border_color=self.colors["accent"]
+            )
+            frame.pack(padx=0, pady=0)
+
+            content = ctk.CTkFrame(frame, fg_color="transparent")
+            content.pack(padx=12, pady=10)
+
+            label = ctk.CTkLabel(
+                content,
+                text=item.get('name', 'Group'),
+                font=ctk.CTkFont(size=13, weight="bold"),
+                text_color=self.colors["text"]
+            )
+            label.pack(side="left")
+
+            key_badge = ctk.CTkLabel(
+                content,
+                text=item.get('toggle_key', '?').upper(),
+                font=ctk.CTkFont(size=10, weight="bold"),
+                text_color="#ffffff",
+                fg_color=self.colors["border"],
+                corner_radius=4,
+                padx=8,
+                pady=4
+            )
+            key_badge.pack(side="right", padx=(10, 0))
+
+        # Position at cursor
+        preview.update_idletasks()
+        preview.geometry(f"+{event.x_root + 10}+{event.y_root + 10}")
+        preview.deiconify()
+
+        self.drag_preview_window = preview
+
+    def _update_drag_preview_position(self, event):
+        """Update preview window position to follow cursor"""
+        if self.drag_preview_window and self.drag_preview_window.winfo_exists():
+            self.drag_preview_window.geometry(f"+{event.x_root + 10}+{event.y_root + 10}")
+
+    def _destroy_drag_preview(self):
+        """Destroy the drag preview window"""
+        if self.drag_preview_window:
+            try:
+                self.drag_preview_window.destroy()
+            except:
+                pass
+            self.drag_preview_window = None
+
+    def _item_drag_motion(self, event):
+        """Handle drag motion - show drop indicator and update preview position"""
+        if not self.item_drag_data['active']:
+            return
+
+        # Update preview position
+        self._update_drag_preview_position(event)
+
+        # Calculate target position based on mouse Y
+        y_pos = event.y_root
+        self._update_drop_indicator(y_pos)
+
+    def _item_drag_end(self, event):
+        """End dragging - perform the move"""
+        if not self.item_drag_data['active']:
+            return
+
+        # Destroy drag preview
+        self._destroy_drag_preview()
+
+        # Hide drop indicator
+        self._hide_drop_indicator()
+
+        # Calculate drop position
+        y_pos = event.y_root
+        target_info = self._calculate_drop_position(y_pos)
+
+        if target_info:
+            dragged_item = self.item_drag_data['item']
+            target_parent = target_info['parent_list']
+            target_index = target_info['index']
+
+            # Debug logging
+            if self.global_settings.get("debug_enabled", False):
+                self.add_log(f"DRAG: Moving '{dragged_item.get('name')}' to index {target_index} (parent has {len(target_parent)} items)", "DEBUG")
+
+            # Remember which group is currently selected (by ID)
+            selected_group_id = None
+            if self.selected_group_index is not None:
+                flat_groups = flatten_groups(self.groups)
+                if self.selected_group_index < len(flat_groups):
+                    selected_group_id = flat_groups[self.selected_group_index].get('id')
+
+            # Perform the move using helper function
+            insert_item_at(self.groups, dragged_item, target_parent, target_index)
+
+            # Update selected_group_index to match the selected group's new position
+            if selected_group_id is not None:
+                flat_groups = flatten_groups(self.groups)
+                for i, group in enumerate(flat_groups):
+                    if group.get('id') == selected_group_id:
+                        self.selected_group_index = i
+                        break
+
+            # If dropped into a folder, expand it
+            if target_info.get('is_folder_drop'):
+                folder = target_info.get('folder')
+                if folder:
+                    folder['expanded'] = True
+
+            # Refresh and save (async save için)
+            self.refresh_group_list()
+            self.root.update_idletasks()  # UI'ı hemen güncelle
+            self.root.after(100, lambda: self.save_config(silent=True))  # Save'i geciktirilmiş yap
+
+        # Reset drag state
+        self.item_drag_data = {
+            'active': False,
+            'item': None,
+            'parent_list': None,
+            'index': None,
+            'widget': None,
+            'start_y': 0
+        }
+
+    def _calculate_drop_position(self, y_pos):
+        """Calculate where to drop the item based on mouse Y position"""
+        # Get all card widgets recursively (klasör container'ları içindekiler dahil)
+        def get_all_cards(widget):
+            cards = []
+            for child in widget.winfo_children():
+                if hasattr(child, '_item_data'):
+                    cards.append(child)
+                # Recursive: container içindeki card'ları da al
+                cards.extend(get_all_cards(child))
+            return cards
+
+        all_cards = get_all_cards(self.group_scroll)
+
+        if not all_cards:
+            return {'parent_list': self.groups, 'index': 0}
+
+        # Find the card at mouse position
+        for i, card in enumerate(all_cards):
+            try:
+                card_y = card.winfo_rooty()
+                card_h = card.winfo_height()
+                card_bottom = card_y + card_h
+
+                # Check if mouse is over this card
+                if card_y <= y_pos <= card_bottom:
+                    data = card._item_data
+                    item = data['item']
+
+                    # If it's a folder, check if we should drop INSIDE it
+                    if item.get('type') == 'folder':
+                        # Calculate thirds: top third = before, middle third = inside, bottom third = after
+                        third = card_h / 3
+
+                        # CRITICAL: Gerçek index'i parent_list'ten al (render index değil!)
+                        try:
+                            real_index = data['parent_list'].index(item)
+                        except (ValueError, AttributeError):
+                            real_index = data['index']  # Fallback
+
+                        if y_pos < card_y + third:
+                            # Top third - drop BEFORE folder
+                            return {
+                                'parent_list': data['parent_list'],
+                                'index': real_index
+                            }
+                        elif y_pos > card_y + 2 * third:
+                            # Bottom third - drop AFTER folder
+                            return {
+                                'parent_list': data['parent_list'],
+                                'index': real_index + 1
+                            }
+                        else:
+                            # Middle third - drop INSIDE folder
+                            folder_items = item.get('items', [])
+                            return {
+                                'parent_list': folder_items,
+                                'index': len(folder_items),  # Add at end of folder
+                                'is_folder_drop': True,
+                                'folder': item
+                            }
+                    else:
+                        # Regular group - check top/bottom half
+                        # CRITICAL: Gerçek index'i parent_list'ten al
+                        try:
+                            real_index = data['parent_list'].index(item)
+                        except (ValueError, AttributeError):
+                            real_index = data['index']  # Fallback
+
+                        card_mid = card_y + card_h / 2
+                        if y_pos < card_mid:
+                            # Drop before
+                            return {
+                                'parent_list': data['parent_list'],
+                                'index': real_index
+                            }
+                        else:
+                            # Drop after
+                            return {
+                                'parent_list': data['parent_list'],
+                                'index': real_index + 1
+                            }
+            except:
+                pass
+
+        # Drop at end
+        last_card = all_cards[-1]
+        data = last_card._item_data
+        item = data['item']
+        # CRITICAL: Gerçek index'i parent_list'ten al
+        try:
+            real_index = data['parent_list'].index(item)
+        except (ValueError, AttributeError):
+            real_index = data['index']  # Fallback
+
+        return {
+            'parent_list': data['parent_list'],
+            'index': real_index + 1
+        }
+
+    def _update_drop_indicator(self, y_pos):
+        """Show visual drop indicator"""
+        # Get target position
+        target_info = self._calculate_drop_position(y_pos)
+
+        # Check if target has changed (optimization: only update if target changed)
+        target_folder_id = target_info.get('folder', {}).get('id') if target_info and target_info.get('is_folder_drop') else None
+        last_target_folder_id = getattr(self, '_last_drop_target_folder_id', None)
+
+        # If target hasn't changed, skip update (performance optimization)
+        if target_folder_id == last_target_folder_id:
+            return
+
+        self._last_drop_target_folder_id = target_folder_id
+
+        # Get all cards recursively (need to use same method as _calculate_drop_position)
+        def get_all_cards(widget):
+            cards = []
+            for child in widget.winfo_children():
+                if hasattr(child, '_item_data'):
+                    cards.append(child)
+                cards.extend(get_all_cards(child))
+            return cards
+
+        all_cards = get_all_cards(self.group_scroll)
+
+        # Reset all folder cards to normal state
+        for card in all_cards:
+            try:
+                data = card._item_data
+                item = data['item']
+
+                # Reset folder highlight
+                if item.get('type') == 'folder':
+                    # Use folder's custom color or default
+                    folder_bg = item.get('color_bg', '#3a3a4e')
+                    card.configure(fg_color=folder_bg)
+            except:
+                pass
+
+        # Highlight target folder if dropping into one
+        if target_folder_id:
+            # Find the card for this folder and highlight it
+            for card in all_cards:
+                try:
+                    data = card._item_data
+                    if data['item'].get('id') == target_folder_id:
+                        # Highlight the folder
+                        card.configure(fg_color="#3a5a3e")  # Green-ish highlight
+                        break
+                except:
+                    pass
+
+    def _hide_drop_indicator(self):
+        """Hide drop indicator"""
+        if self.item_drop_indicator:
+            try:
+                self.item_drop_indicator.destroy()
+            except:
+                pass
+            self.item_drop_indicator = None
+
+        # Reset cached target folder ID
+        self._last_drop_target_folder_id = None
+
+    def _render_group(self, group, level, index, conflicting_keys, parent_list, parent_folder=None, parent_widget=None):
+        """Render a group card"""
+        if parent_widget is None:
+            parent_widget = self.group_scroll
+
+        # Find the actual index in the flat groups list for compatibility
+        flat_groups = flatten_groups(self.groups)
+        try:
+            group_index = next(i for i, g in enumerate(flat_groups) if g.get('id') == group.get('id'))
+        except StopIteration:
+            group_index = index
+
+        is_selected = group_index == self.selected_group_index
+        is_enabled = group.get('enabled', True)
+        has_conflict = is_enabled and group.get('toggle_key', '').lower() in conflicting_keys
+
+        # Determine card color - öncelik sırası: conflict > selected > enabled > disabled
+        if has_conflict:
+            card_color = "#4a2020"  # KIRMIZI - en yüksek öncelik (conflict)
+        elif is_selected:
+            card_color = self.colors["accent"]  # CYAN - yüksek öncelik
+        elif is_enabled:
+            card_color = "#1a1a1a"  # KOYU SİYAH - orta öncelik
+        else:
+            card_color = self.colors["bg_secondary"]  # GRİ - disabled
+
+        # Create group card
+        card = ctk.CTkFrame(
+            parent_widget,
+            fg_color=card_color,
+            corner_radius=10,
+            height=60
+        )
+        # Eğer klasör içindeyse (parent_folder varsa), padding'i container'a göre ayarla
+        if parent_folder is not None:
+            card.pack(fill="x", pady=5, padx=5)  # Container içinde 5px padding (klasör header ile aynı)
+        else:
+            card.pack(fill="x", pady=4, padx=(4 + level * 20, 4))
+        card.pack_propagate(False)
+
+        # Store group index for selection
+        card._group_index = group_index
+
+        # Store metadata for drag & drop
+        card._item_data = {
+            'item': group,
+            'parent_list': parent_list,
+            'parent_folder': parent_folder,
+            'index': index,
+            'level': level
+        }
+
+        content = ctk.CTkFrame(card, fg_color="transparent")
+        content.pack(fill="both", expand=True, padx=12, pady=10)
+
+        # Drag handle
+        drag_handle = ctk.CTkLabel(
+            content,
+            text="≡",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=self.colors["text_secondary"],
+            width=20,
+            cursor="hand2"
+        )
+        drag_handle.pack(side="left", padx=(0, 8))
+
+        # Toggle switch
+        toggle_switch = ctk.CTkSwitch(
+            content,
+            text="",
+            width=36,
+            height=18,
+            switch_width=36,
+            switch_height=18,
+            fg_color=self.colors["border"],
+            progress_color=self.colors["success"],
+            button_color="#ffffff",
+            button_hover_color="#eeeeee"
+        )
+        toggle_switch.pack(side="left", padx=(0, 10))
+
+        if is_enabled:
+            toggle_switch.select()
+        else:
+            toggle_switch.deselect()
+
+        toggle_switch.configure(command=lambda idx=group_index: self.toggle_group_enabled(idx))
+
+        # Info frame
+        info_frame = ctk.CTkFrame(content, fg_color="transparent")
+        info_frame.pack(side="left", fill="both", expand=True)
+
+        name_color = "#ffffff" if is_selected else (self.colors["text"] if is_enabled else self.colors["text_secondary"])
+        name_label = ctk.CTkLabel(
+            info_frame,
+            text=group['name'],
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=name_color,
+            anchor="w"
+        )
+        name_label.pack(anchor="w")
+
+        spam_text = f"Spam: {group.get('spam_key', '-')}" if group.get('spam_enabled') else "Spam: Kapalı"
+        spam_color = "#cccccc" if is_selected else self.colors["text_secondary"]
+        spam_label = ctk.CTkLabel(
+            info_frame,
+            text=spam_text,
+            font=ctk.CTkFont(size=11),
+            text_color=spam_color,
+            anchor="w"
+        )
+        spam_label.pack(anchor="w")
+
+        # Key badge
+        badge_bg = "#1a5f7a" if is_selected else self.colors["border"]
+        badge_text_color = "#ffffff" if is_selected else self.colors["text_secondary"]
+        key_badge = ctk.CTkLabel(
+            content,
+            text=group.get('toggle_key', '?').upper(),
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color=badge_text_color,
+            fg_color=badge_bg,
+            corner_radius=4,
+            padx=8,
+            pady=4
+        )
+        key_badge.pack(side="right")
+
+        # Store widget references for efficient updates
+        card._name_label = name_label
+        card._spam_label = spam_label
+        card._key_badge = key_badge
+
+        # Click handlers
+        for widget in [card, content, info_frame, name_label, spam_label, key_badge]:
+            widget.bind('<Button-1>', lambda e, idx=group_index: self.select_group(idx))
+
+        # Drag & drop events
+        drag_handle.bind('<Button-1>', lambda e, item=group, plist=parent_list: self._item_drag_start(e, item, plist))
+        drag_handle.bind('<B1-Motion>', self._item_drag_motion)
+        drag_handle.bind('<ButtonRelease-1>', self._item_drag_end)
 
     def _create_empty_group_card(self):
         """Create an empty group card template"""
@@ -859,44 +1737,134 @@ Kullanım:
         """Aktif gruplardaki eksik template görsellerini kontrol et"""
         return check_missing_template_images(self.groups, IMAGES_FOLDER)
 
+    def get_selected_group(self):
+        """Get the currently selected group from flat groups list"""
+        if self.selected_group_index is None:
+            return None
+        flat_groups = flatten_groups(self.groups)
+        if self.selected_group_index >= len(flat_groups):
+            return None
+        return flat_groups[self.selected_group_index]
+
+    def get_selected_item(self):
+        """Get the currently selected item (group or folder)"""
+        # If a folder is selected, return it
+        if self.selected_folder_id:
+            folder = find_item_by_id(self.groups, self.selected_folder_id)
+            if folder and folder.get('type') == 'folder':
+                return folder
+
+        # If a group is selected, return it
+        group = self.get_selected_group()
+        if group:
+            return group
+
+        return None
+
     def select_group(self, index):
-        """Select a group - only update changed cards"""
+        """Select a group - update selection state without full refresh"""
         if self.selected_group_index == index:
             return  # Zaten seçili, işlem yapma
 
         old_index = self.selected_group_index
+        old_folder_id = self.selected_folder_id
+
         self.selected_group_index = index
         self.selected_template_index = None
+        self.selected_folder_id = None  # Klasör seçimini clear et
 
-        # Sadece eski ve yeni seçili kartları güncelle
-        self._update_group_card_selection(old_index, False)
-        self._update_group_card_selection(index, True)
-
+        # Hızlı update: Sadece seçim renklerini güncelle, tam render yapma
+        self._update_selection_colors(old_index, old_folder_id, index, None)
         self.update_group_details()
         self.refresh_template_list()
 
+    def select_folder(self, folder_id):
+        """Select a folder - update selection state without full refresh"""
+        if self.selected_folder_id == folder_id:
+            return  # Zaten seçili
+
+        old_index = self.selected_group_index
+        old_folder_id = self.selected_folder_id
+
+        self.selected_folder_id = folder_id
+        self.selected_group_index = None  # Grup seçimini clear et
+        self.selected_template_index = None
+
+        # Hızlı update: Sadece seçim renklerini güncelle
+        self._update_selection_colors(old_index, old_folder_id, None, folder_id)
+        self.update_group_details()
+        self.refresh_template_list()
+
+    def _update_selection_colors(self, old_group_index, old_folder_id, new_group_index, new_folder_id):
+        """Hızlı seçim renk güncellemesi - sadece eski ve yeni seçili kartların renklerini değiştir"""
+        # Eski grup seçimini kaldır
+        if old_group_index is not None:
+            self._update_group_card_selection(old_group_index, False)
+
+        # Eski klasör seçimini kaldır
+        if old_folder_id is not None:
+            self._update_folder_card_selection(old_folder_id, False)
+
+        # Yeni grup seçimini ekle
+        if new_group_index is not None:
+            self._update_group_card_selection(new_group_index, True)
+
+        # Yeni klasör seçimini ekle
+        if new_folder_id is not None:
+            self._update_folder_card_selection(new_folder_id, True)
+
+    def _update_folder_card_selection(self, folder_id, is_selected):
+        """Sadece bir klasör kartının seçim durumunu güncelle"""
+        if folder_id is None:
+            return False
+
+        # Tüm widget'ları recursive olarak tara
+        def find_folder_card(widget):
+            for child in widget.winfo_children():
+                if hasattr(child, '_item_data'):
+                    item_data = child._item_data
+                    if item_data['item'].get('id') == folder_id and item_data['item'].get('type') == 'folder':
+                        # Klasör kartını bulduk, rengini güncelle
+                        folder = item_data['item']
+                        folder_bg = folder.get('color_bg', '#3a3a4e')
+                        card_color = self.colors["accent"] if is_selected else folder_bg
+                        child.configure(fg_color=card_color)
+
+                        # Label rengini güncelle
+                        for label_child in child.winfo_children():
+                            if hasattr(label_child, 'winfo_children'):
+                                for inner in label_child.winfo_children():
+                                    if isinstance(inner, ctk.CTkLabel) and '📁' in str(inner.cget('text')):
+                                        folder_fg = folder.get('color_fg', '#ffcc00')
+                                        text_color = "#ffffff" if is_selected else folder_fg
+                                        inner.configure(text_color=text_color)
+                        return True
+                # Recursive search
+                if find_folder_card(child):
+                    return True
+            return False
+
+        return find_folder_card(self.group_scroll)
+
     def _update_group_card_selection(self, index, is_selected):
-        """Update only the selection state of a specific group card"""
-        if index is None or index >= len(self.groups):
-            return
+        """Update only the selection state of a specific group card. Returns True if card was found and updated."""
+        flat_groups = flatten_groups(self.groups)
+        if index is None or index >= len(flat_groups):
+            return False
 
         # Kartı bul
         for card in self.group_scroll.winfo_children():
             if hasattr(card, '_group_index') and card._group_index == index:
-                group = self.groups[index]
+                group = flat_groups[index]
                 is_enabled = group.get('enabled', True)
-                conflicting_keys = self.get_conflicting_keys()
-                has_conflict = is_enabled and group.get('toggle_key', '').lower() in conflicting_keys
 
-                # Renk güncelle
+                # Renk güncelle - 3 basit durum
                 if is_selected:
-                    card_color = self.colors["accent"]
-                elif has_conflict:
-                    card_color = "#4a2020"
+                    card_color = self.colors["accent"]  # CYAN - en yüksek öncelik
                 elif is_enabled:
-                    card_color = self.colors["bg_dark"]
+                    card_color = "#1a1a1a"  # KOYU SİYAH - orta öncelik
                 else:
-                    card_color = self.colors["bg_secondary"]
+                    card_color = self.colors["bg_secondary"]  # GRİ - disabled
 
                 card.configure(fg_color=card_color)
 
@@ -910,27 +1878,40 @@ Kullanım:
                 badge_bg = "#1a5f7a" if is_selected else self.colors["border"]
                 badge_text_color = "#ffffff" if is_selected else self.colors["text_secondary"]
                 card._key_badge.configure(fg_color=badge_bg, text_color=badge_text_color)
-                break
+                return True
+
+        return False  # Card not found
 
     def toggle_group_enabled(self, index):
-        """Toggle group enabled/disabled"""
-        if index < len(self.groups):
-            current = self.groups[index].get('enabled', True)
-            self.groups[index]['enabled'] = not current
+        """Toggle group enabled/disabled - optimized to only update that card"""
+        flat_groups = flatten_groups(self.groups)
+        if index < len(flat_groups):
+            group = flat_groups[index]
+            current = group.get('enabled', True)
+            group['enabled'] = not current
             status = "aktif" if not current else "pasif"
-            self.add_log(f"Grup '{self.groups[index]['name']}' {status} yapıldı.", "INFO")
-            self.refresh_group_list()
+            self.add_log(f"Grup '{group['name']}' {status} yapıldı.", "INFO")
+
+            # Sadece o grubun kartını güncelle (tam refresh yerine)
+            is_selected = (self.selected_group_index == index)
+            self._update_group_card_selection(index, is_selected)
+
+            # Config'i async kaydet
+            self.root.after(100, lambda: self.save_config(silent=True))
 
     def update_group_details(self):
         """Update the group details panel"""
-        if self.selected_group_index is None or self.selected_group_index >= len(self.groups):
-            self.group_name_label.configure(text="Bir grup seçin...")
+        group = self.get_selected_group()
+        if group is None:
+            self.group_name_label.configure(text="Bir grup seçin...", text_color=self.colors["text_secondary"])
+            self.group_name_container.configure(fg_color=self.colors["bg_dark"])
             self.group_info_label.configure(text="")
             self.group_notes_label.configure(text="")
             return
 
-        group = self.groups[self.selected_group_index]
-        self.group_name_label.configure(text=f"📁 {group['name']}")
+        # Highlight selected group with accent color
+        self.group_name_container.configure(fg_color=self.colors["accent"])
+        self.group_name_label.configure(text=f"📁 {group['name']}", text_color="#000000")
 
         spam_info = f"Spam: {group.get('spam_key', 'Yok')}" if group.get('spam_enabled') else "Spam: Kapalı"
         region = group.get('search_region', [0, 0, 100, 100])
@@ -950,14 +1931,13 @@ Kullanım:
         existing_cards = [w for w in self.template_scroll.winfo_children()
                          if isinstance(w, ctk.CTkFrame) and hasattr(w, '_template_index')]
 
-        if self.selected_group_index is None or self.selected_group_index >= len(self.groups):
+        group = self.get_selected_group()
+        if group is None:
             # Tüm kartları gizle ve pool'a taşı
             for card in existing_cards:
                 card.pack_forget()
                 self.template_card_pool.append(card)
             return
-
-        group = self.groups[self.selected_group_index]
         templates = group.get('templates', [])
         needed = len(templates)
 
@@ -1123,9 +2103,10 @@ Kullanım:
 
     def _on_template_switch_toggle(self, index, switch):
         """Handle template switch toggle - update only affected card"""
-        if self.selected_group_index is not None:
+        group = self.get_selected_group()
+        if group is not None:
             is_enabled = switch.get()
-            self.groups[self.selected_group_index]['templates'][index]['enabled'] = is_enabled
+            group['templates'][index]['enabled'] = is_enabled
             # Sadece bu kartın rengini güncelle
             self._update_template_card_color(index, is_enabled)
 
@@ -1161,10 +2142,14 @@ Kullanım:
 
     def _update_template_card_selection(self, index, is_selected):
         """Update only the selection state of a specific template card"""
-        if index is None or self.selected_group_index is None:
+        if index is None:
             return
 
-        templates = self.groups[self.selected_group_index].get('templates', [])
+        group = self.get_selected_group()
+        if group is None:
+            return
+
+        templates = group.get('templates', [])
         if index >= len(templates):
             return
 
@@ -1231,7 +2216,8 @@ Kullanım:
         self.template_dragging = False
         self.hide_template_drop_indicator()
 
-        if self.selected_group_index is None:
+        group = self.get_selected_group()
+        if group is None:
             return
 
         from_index = self.template_drag_index
@@ -1242,7 +2228,7 @@ Kullanım:
             to_index -= 1
 
         if from_index != to_index:
-            templates = self.groups[self.selected_group_index]['templates']
+            templates = group['templates']
             template = templates.pop(from_index)
             templates.insert(to_index, template)
             self.add_log(f"Template sırası değişti: {from_index + 1} -> {to_index + 1}", "INFO")
@@ -1278,23 +2264,62 @@ Kullanım:
         from ui.dialogs.group_dialogs import AddGroupDialog
         AddGroupDialog(self.root, self)
 
+    def add_folder(self):
+        """Add a new folder"""
+        # Simple dialog for folder name
+        dialog = ctk.CTkInputDialog(
+            text="Klasör adı:",
+            title="Yeni Klasör"
+        )
+        folder_name = dialog.get_input()
+
+        if folder_name:
+            new_folder = get_default_folder()
+            new_folder['name'] = folder_name
+            self.groups.append(new_folder)
+            self.refresh_group_list()
+            self.save_config(silent=True)
+
     def edit_group(self):
         """Edit selected group"""
-        if self.selected_group_index is None:
+        group = self.get_selected_group()
+        if group is None:
             messagebox.showwarning("Uyarı", "Önce bir grup seçin!")
             return
+
+        # For EditGroupDialog compatibility, we need to create a temporary wrapper
+        # that makes the group accessible as if it were in a flat list
         from ui.dialogs.group_dialogs import EditGroupDialog
-        EditGroupDialog(self.root, self, self.selected_group_index)
+
+        # Create a temporary flat manager proxy
+        class ManagerProxy:
+            def __init__(self, real_manager, target_group):
+                self.root = real_manager.root
+                self.groups = [target_group]  # Single-item list for dialog compatibility
+                self.colors = real_manager.colors
+                self._real_manager = real_manager
+
+            def refresh_group_list(self):
+                self._real_manager.refresh_group_list()
+
+            def update_group_details(self):
+                self._real_manager.update_group_details()
+
+        proxy = ManagerProxy(self, group)
+        EditGroupDialog(self.root, proxy, 0)  # Always use index 0 for the proxy
 
     def delete_group(self):
         """Delete selected group"""
-        if self.selected_group_index is None:
+        group = self.get_selected_group()
+        if group is None:
             messagebox.showwarning("Uyarı", "Önce bir grup seçin!")
             return
 
-        group = self.groups[self.selected_group_index]
         if messagebox.askyesno("Onayla", f"'{group['name']}' grubu silinsin mi?\nTüm template'ler de silinecek!"):
-            self.groups.pop(self.selected_group_index)
+            # Remove from nested structure using ID
+            group_id = group.get('id')
+            if group_id:
+                remove_item_by_id(self.groups, group_id)
             self.selected_group_index = None
             self.refresh_group_list()
             self.update_group_details()
@@ -1302,12 +2327,12 @@ Kullanım:
 
     def export_group(self):
         """Export selected group as text"""
-        if self.selected_group_index is None:
+        group = self.get_selected_group()
+        if group is None:
             messagebox.showwarning("Uyarı", "Önce bir grup seçin!")
             return
 
         from ui.dialogs.preset_dialogs import ExportGroupDialog
-        group = self.groups[self.selected_group_index]
         ExportGroupDialog(self.root, group, IMAGES_FOLDER)
 
     def import_group(self):
@@ -1330,32 +2355,35 @@ Kullanım:
 
     def edit_template(self):
         """Edit selected template"""
-        if self.selected_group_index is None or self.selected_template_index is None:
+        group = self.get_selected_group()
+        if group is None or self.selected_template_index is None:
             messagebox.showwarning("Uyarı", "Önce bir template seçin!")
             return
         from ui.dialogs.template_dialogs import EditTemplateDialog
-        template = self.groups[self.selected_group_index]['templates'][self.selected_template_index]
+        template = group['templates'][self.selected_template_index]
         EditTemplateDialog(self.root, self, template, self.selected_template_index)
 
     def delete_template(self):
         """Delete selected template"""
-        if self.selected_group_index is None or self.selected_template_index is None:
+        group = self.get_selected_group()
+        if group is None or self.selected_template_index is None:
             messagebox.showwarning("Uyarı", "Önce bir template seçin!")
             return
 
-        template = self.groups[self.selected_group_index]['templates'][self.selected_template_index]
+        template = group['templates'][self.selected_template_index]
         if messagebox.askyesno("Onayla", f"'{template['name']}' silinsin mi?"):
-            self.groups[self.selected_group_index]['templates'].pop(self.selected_template_index)
+            group['templates'].pop(self.selected_template_index)
             self.selected_template_index = None
             self.refresh_template_list()
 
     def duplicate_template(self):
         """Duplicate selected template"""
-        if self.selected_group_index is None or self.selected_template_index is None:
+        group = self.get_selected_group()
+        if group is None or self.selected_template_index is None:
             messagebox.showwarning("Uyarı", "Önce bir template seçin!")
             return
 
-        original = self.groups[self.selected_group_index]['templates'][self.selected_template_index]
+        original = group['templates'][self.selected_template_index]
 
         # Deep copy the template
         new_template = copy.deepcopy(original)
@@ -1366,7 +2394,7 @@ Kullanım:
         new_name = f"{base_name} (kopya)"
 
         # Check if name already exists
-        existing_names = [t['name'] for t in self.groups[self.selected_group_index]['templates']]
+        existing_names = [t['name'] for t in group['templates']]
         while new_name in existing_names:
             counter += 1
             new_name = f"{base_name} (kopya {counter})"
@@ -1392,7 +2420,7 @@ Kullanım:
 
         # Insert after the original
         insert_index = self.selected_template_index + 1
-        self.groups[self.selected_group_index]['templates'].insert(insert_index, new_template)
+        group['templates'].insert(insert_index, new_template)
 
         # Select the new template
         self.selected_template_index = insert_index
@@ -1672,12 +2700,15 @@ Kullanım:
 
     def start_all_bots(self):
         """Start all group processes"""
-        if not self.groups:
+        # Flatten nested structure to get all groups
+        all_groups = flatten_groups(self.groups)
+
+        if not all_groups:
             messagebox.showwarning("Uyarı", "Hiç grup yok!")
             return
 
         # Aktif grup var mı kontrol et
-        enabled_groups = [g for g in self.groups if g.get('enabled', True)]
+        enabled_groups = [g for g in all_groups if g.get('enabled', True)]
         if not enabled_groups:
             messagebox.showwarning("Uyarı", "Hiç aktif grup yok! En az bir grubu aktif yapın.")
             return
@@ -1706,10 +2737,8 @@ Kullanım:
         # Create status queue
         self.status_queue = multiprocessing.Queue()
 
-        # Start process for each group
-        for group in self.groups:
-            if not group.get('enabled', True):
-                continue
+        # Start process for each enabled group
+        for group in enabled_groups:
 
             group_id = group['id']
 
@@ -1732,14 +2761,13 @@ Kullanım:
             # Create indicator
             self.create_indicator(group_id, len(self.indicator_windows))
 
-        # Setup hotkeys
+        # Setup hotkeys - use enabled_groups (already filtered)
         keyboard.unhook_all()
-        for group in self.groups:
-            if group.get('enabled', True):
-                toggle_key = group.get('toggle_key')
-                if toggle_key:
-                    group_id = group['id']
-                    keyboard.on_press_key(toggle_key, lambda e, gid=group_id: self.toggle_group(gid))
+        for group in enabled_groups:
+            toggle_key = group.get('toggle_key')
+            if toggle_key:
+                group_id = group['id']
+                keyboard.on_press_key(toggle_key, lambda e, gid=group_id: self.toggle_group(gid))
 
         self.bot_active = True
         self.update_ui_state()

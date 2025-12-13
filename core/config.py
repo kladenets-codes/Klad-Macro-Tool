@@ -28,6 +28,7 @@ def get_default_group() -> Dict[str, Any]:
         Dictionary with default group settings
     """
     return {
+        "type": "group",
         "id": str(uuid.uuid4()),
         "name": "Default Group",
         "enabled": True,
@@ -40,6 +41,22 @@ def get_default_group() -> Dict[str, Any]:
         "cycle_delay": DEFAULT_CYCLE_DELAY,
         "notes": "",
         "templates": []
+    }
+
+
+def get_default_folder() -> Dict[str, Any]:
+    """
+    Get a default folder configuration.
+
+    Returns:
+        Dictionary with default folder settings
+    """
+    return {
+        "type": "folder",
+        "id": str(uuid.uuid4()),
+        "name": "Yeni Klasör",
+        "expanded": True,
+        "items": []
     }
 
 
@@ -64,17 +81,34 @@ def load_config(config_file: Path) -> Tuple[List[Dict], Dict[str, Any], List[Dic
             global_settings = data.get("global_settings", {})
             presets = data.get("presets", [])
 
-            # Migration: Eski template'lere trigger_condition ekle
-            for group in groups:
-                for template in group.get('templates', []):
-                    if 'trigger_condition' not in template:
-                        template['trigger_condition'] = DEFAULT_TRIGGER_CONDITION
+            # Migration: Eski gruplara type ekle
+            def migrate_items(items):
+                for item in items:
+                    if 'type' not in item:
+                        # Eğer 'items' anahtarı varsa klasör, yoksa grup
+                        if 'items' in item:
+                            item['type'] = 'folder'
+                            if 'expanded' not in item:
+                                item['expanded'] = True
+                            migrate_items(item['items'])  # Recursive
+                        else:
+                            item['type'] = 'group'
+                    elif item['type'] == 'folder':
+                        migrate_items(item.get('items', []))  # Recursive
+
+                    # Template migration (sadece gruplar için)
+                    if item.get('type') == 'group':
+                        for template in item.get('templates', []):
+                            if 'trigger_condition' not in template:
+                                template['trigger_condition'] = DEFAULT_TRIGGER_CONDITION
+
+            migrate_items(groups)
 
             # Migration: Eski config'lere cpu_cores ekle
             if 'cpu_cores' not in global_settings:
                 global_settings['cpu_cores'] = 0  # 0 = sınırsız
 
-            logger.info(f"Config loaded: {len(groups)} groups, {len(presets)} presets")
+            logger.info(f"Config loaded: {len(groups)} items, {len(presets)} presets")
             return groups, global_settings, presets
     except Exception as e:
         logger.error(f"Failed to load config: {e}")
@@ -121,17 +155,24 @@ def get_conflicting_keys(groups: List[Dict]) -> set:
     Find conflicting toggle keys among enabled groups.
 
     Args:
-        groups: List of group configurations
+        groups: List of group configurations (can include folders)
 
     Returns:
         Set of keys that are used by multiple enabled groups
     """
     key_counts = {}
-    for group in groups:
-        if group.get('enabled', True):
-            key = group.get('toggle_key', '').lower()
-            if key:
-                key_counts[key] = key_counts.get(key, 0) + 1
+
+    def count_keys(items):
+        for item in items:
+            if item.get('type') == 'folder':
+                count_keys(item.get('items', []))
+            elif item.get('type') == 'group':
+                if item.get('enabled', True):
+                    key = item.get('toggle_key', '').lower()
+                    if key:
+                        key_counts[key] = key_counts.get(key, 0) + 1
+
+    count_keys(groups)
     return {k for k, v in key_counts.items() if v > 1}
 
 
@@ -140,33 +181,39 @@ def check_missing_template_images(groups: List[Dict], images_folder: Path) -> Di
     Check for missing template images in enabled groups.
 
     Args:
-        groups: List of group configurations
+        groups: List of group configurations (can include folders)
         images_folder: Path to the images folder
 
     Returns:
         Dictionary mapping group names to lists of missing template descriptions
     """
     missing = {}
-    for group in groups:
-        if not group.get('enabled', True):
-            continue
 
-        group_missing = []
-        for template in group.get('templates', []):
-            if not template.get('enabled', True):
-                continue
+    def check_items(items):
+        for item in items:
+            if item.get('type') == 'folder':
+                check_items(item.get('items', []))
+            elif item.get('type') == 'group':
+                if not item.get('enabled', True):
+                    continue
 
-            img_file = template.get('file', '')
-            if not img_file:
-                group_missing.append(f"{template.get('name', 'Unnamed')} (dosya yok)")
-            else:
-                img_path = images_folder / img_file
-                if not img_path.exists():
-                    group_missing.append(f"{template.get('name', 'Unnamed')} ({img_file})")
+                group_missing = []
+                for template in item.get('templates', []):
+                    if not template.get('enabled', True):
+                        continue
 
-        if group_missing:
-            missing[group.get('name', 'Unnamed Group')] = group_missing
+                    img_file = template.get('file', '')
+                    if not img_file:
+                        group_missing.append(f"{template.get('name', 'Unnamed')} (dosya yok)")
+                    else:
+                        img_path = images_folder / img_file
+                        if not img_path.exists():
+                            group_missing.append(f"{template.get('name', 'Unnamed')} ({img_file})")
 
+                if group_missing:
+                    missing[item.get('name', 'Unnamed Group')] = group_missing
+
+    check_items(groups)
     return missing
 
 
@@ -182,9 +229,128 @@ def is_hotkey_used(groups: List[Dict], key: str, exclude_group_id: Optional[str]
     Returns:
         Name of the group using the key, or None if not used
     """
-    for group in groups:
-        if exclude_group_id and group.get('id') == exclude_group_id:
-            continue
-        if group.get('toggle_key', '').lower() == key.lower():
-            return group['name']
+    def check_items(items):
+        for item in items:
+            if item.get('type') == 'folder':
+                result = check_items(item.get('items', []))
+                if result:
+                    return result
+            elif item.get('type') == 'group':
+                if exclude_group_id and item.get('id') == exclude_group_id:
+                    continue
+                if item.get('toggle_key', '').lower() == key.lower():
+                    return item['name']
+        return None
+
+    return check_items(groups)
+
+
+def flatten_groups(items: List[Dict]) -> List[Dict]:
+    """
+    Flatten nested folder structure to get all groups.
+
+    Args:
+        items: List of items (groups and folders)
+
+    Returns:
+        Flat list of all groups
+    """
+    result = []
+    for item in items:
+        if item.get('type') == 'folder':
+            result.extend(flatten_groups(item.get('items', [])))
+        elif item.get('type') == 'group':
+            result.append(item)
+    return result
+
+
+def find_item_by_id(items: List[Dict], item_id: str) -> Optional[Dict]:
+    """
+    Find an item (group or folder) by ID in nested structure.
+
+    Args:
+        items: List of items to search
+        item_id: ID to find
+
+    Returns:
+        Item dictionary if found, None otherwise
+    """
+    for item in items:
+        if item.get('id') == item_id:
+            return item
+        if item.get('type') == 'folder':
+            found = find_item_by_id(item.get('items', []), item_id)
+            if found:
+                return found
     return None
+
+
+def remove_item_by_id(items: List[Dict], item_id: str) -> bool:
+    """
+    Remove an item from nested structure by ID.
+
+    Args:
+        items: List of items
+        item_id: ID to remove
+
+    Returns:
+        True if removed, False otherwise
+    """
+    for i, item in enumerate(items):
+        if item.get('id') == item_id:
+            items.pop(i)
+            return True
+        if item.get('type') == 'folder':
+            if remove_item_by_id(item.get('items', []), item_id):
+                return True
+    return False
+
+
+def find_parent_and_index(items: List[Dict], item_id: str, parent: Optional[List] = None) -> Optional[tuple]:
+    """
+    Find the parent list and index of an item.
+
+    Args:
+        items: List of items to search
+        item_id: ID to find
+        parent: Parent list (used internally for recursion)
+
+    Returns:
+        Tuple of (parent_list, index) if found, None otherwise
+    """
+    if parent is None:
+        parent = items
+
+    for i, item in enumerate(items):
+        if item.get('id') == item_id:
+            return (items, i)
+        if item.get('type') == 'folder':
+            result = find_parent_and_index(item.get('items', []), item_id, item.get('items', []))
+            if result:
+                return result
+    return None
+
+
+def insert_item_at(items: List[Dict], item: Dict, target_parent: List[Dict], target_index: int) -> bool:
+    """
+    Insert an item at a specific position (after removing it from its current location).
+
+    Args:
+        items: Root items list
+        item: Item to insert
+        target_parent: Target parent list
+        target_index: Target index in parent
+
+    Returns:
+        True if successful, False otherwise
+    """
+    # Remove from current location
+    item_id = item.get('id')
+    if not item_id:
+        return False
+
+    remove_item_by_id(items, item_id)
+
+    # Insert at new location
+    target_parent.insert(target_index, item)
+    return True

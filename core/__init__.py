@@ -52,11 +52,17 @@ from .worker import group_worker
 
 from .config import (
     get_default_group,
+    get_default_folder,
     load_config,
     save_config,
     get_conflicting_keys,
     check_missing_template_images,
     is_hotkey_used,
+    flatten_groups,
+    find_item_by_id,
+    remove_item_by_id,
+    find_parent_and_index,
+    insert_item_at,
 )
 
 from .export_import import (
@@ -101,11 +107,17 @@ __all__ = [
 
     # Config
     'get_default_group',
+    'get_default_folder',
     'load_config',
     'save_config',
     'get_conflicting_keys',
     'check_missing_template_images',
     'is_hotkey_used',
+    'flatten_groups',
+    'find_item_by_id',
+    'remove_item_by_id',
+    'find_parent_and_index',
+    'insert_item_at',
 
     # Export/Import
     'generate_export_code',

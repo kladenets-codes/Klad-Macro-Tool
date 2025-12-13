@@ -165,6 +165,7 @@ class AddGroupDialog:
             pre = hold = post = 1
 
         new_group = {
+            "type": "group",
             "id": str(uuid.uuid4()),
             "name": name,
             "enabled": True,
@@ -179,8 +180,21 @@ class AddGroupDialog:
             "templates": []
         }
 
-        self.manager.groups.append(new_group)
+        # Seçili item'ı kontrol et - eğer klasör ise içine ekle
+        selected_item = self.manager.get_selected_item()
+        if selected_item and selected_item.get('type') == 'folder':
+            # Klasörün içine ekle
+            if 'items' not in selected_item:
+                selected_item['items'] = []
+            selected_item['items'].append(new_group)
+            # Klasörü expand et
+            selected_item['expanded'] = True
+        else:
+            # Root seviyesine ekle
+            self.manager.groups.append(new_group)
+
         self.manager.refresh_group_list()
+        self.manager.save_config(silent=True)
         self.top.destroy()
 
 

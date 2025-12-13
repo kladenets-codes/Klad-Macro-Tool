@@ -105,7 +105,14 @@ class TemplateCapture:
         self.canvas.bind('<ButtonRelease-1>', self.on_release)
         self.canvas.bind('<Escape>', lambda e: self.cancel())
         self.canvas.bind('<Motion>', self.on_motion)
+
+        # ESC için hem pencereye hem canvas'a binding ekle
+        self.top.bind('<Escape>', lambda e: self.cancel())
+
+        # Focus'u zorla
         self.canvas.focus_set()
+        self.top.update()
+        self.canvas.focus_force()
 
         # Talimatlar
         self.canvas.create_rectangle(
@@ -922,6 +929,8 @@ class EditTemplateDialog:
 
     def capture_new_image(self):
         """Yeni görsel yakalamak için ekran yakalama başlat"""
+        # Ana pencereyi ve dialog'u gizle
+        self.manager.root.withdraw()
         self.top.withdraw()
         self.top.after(200, self._do_capture)
 
@@ -1040,7 +1049,14 @@ class EditTemplateCapture:
         self.canvas.bind('<ButtonRelease-1>', self.on_release)
         self.canvas.bind('<Escape>', lambda e: self.cancel())
         self.canvas.bind('<Motion>', self.on_motion)
+
+        # ESC için hem pencereye hem canvas'a binding ekle
+        self.top.bind('<Escape>', lambda e: self.cancel())
+
+        # Focus'u zorla
         self.canvas.focus_set()
+        self.top.update()
+        self.canvas.focus_force()
 
         # Talimatlar
         self.canvas.create_rectangle(
@@ -1116,10 +1132,14 @@ class EditTemplateCapture:
         template_img = self.screenshot.crop((x1, y1, x2, y2))
         self.top.destroy()
 
+        # Ana pencereyi ve edit dialog'u geri göster
+        self.edit_dialog.manager.root.deiconify()
         # Edit dialog'a yeni görseli gönder
         self.edit_dialog.update_preview(template_img)
         self.edit_dialog.top.deiconify()
 
     def cancel(self):
         self.top.destroy()
+        # Ana pencereyi ve edit dialog'u geri göster
+        self.edit_dialog.manager.root.deiconify()
         self.edit_dialog.top.deiconify()

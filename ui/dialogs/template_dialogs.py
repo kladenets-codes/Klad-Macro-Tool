@@ -13,6 +13,7 @@ from pathlib import Path
 
 from core.keyboard_utils import get_physical_key_name
 from core.constants import DEFAULT_TRIGGER_CONDITION, TRIGGER_CONDITION_FOUND, TRIGGER_CONDITION_NOT_FOUND
+from core.config import get_safe_folder_name, get_group_images_folder
 
 # Images folder path
 IMAGES_FOLDER = Path(__file__).parent.parent.parent / "images"
@@ -348,9 +349,20 @@ class TemplateFinalizeDialog:
             messagebox.showwarning("Uyarı", "Tuş atamalısınız!")
             return
 
-        # Save image
+        # Get selected group (folder-safe way)
+        selected_group = self.manager.get_selected_group()
+        if selected_group is None:
+            messagebox.showerror("Hata", "Seçili grup bulunamadı!")
+            return
+
+        # Get group name for folder
+        group_name = selected_group.get('name', 'Default')
+        safe_group_name = get_safe_folder_name(group_name)
+
+        # Create group folder and save image
+        group_folder = get_group_images_folder(IMAGES_FOLDER, group_name)
         filename = f"{name}.png"
-        filepath = IMAGES_FOLDER / filename
+        filepath = group_folder / filename
         try:
             self.template_img.save(filepath, 'PNG')
         except Exception as e:
@@ -369,9 +381,12 @@ class TemplateFinalizeDialog:
         trigger_display = self.trigger_menu.get()
         trigger_condition = TRIGGER_CONDITION_FOUND if trigger_display == "Görsel bulunduğunda" else TRIGGER_CONDITION_NOT_FOUND
 
+        # Store relative path: groupName/filename.png
+        relative_file_path = f"{safe_group_name}/{filename}"
+
         new_template = {
             "name": name,
-            "file": filename,
+            "file": relative_file_path,
             "enabled": True,
             "threshold": self.threshold_slider.get(),
             "key_combo": self.key_combo,
@@ -381,12 +396,6 @@ class TemplateFinalizeDialog:
             "use_macro": False,
             "macro": []
         }
-
-        # Get selected group (folder-safe way)
-        selected_group = self.manager.get_selected_group()
-        if selected_group is None:
-            messagebox.showerror("Hata", "Seçili grup bulunamadı!")
-            return
 
         if 'templates' not in selected_group:
             selected_group['templates'] = []
@@ -976,6 +985,12 @@ class EditTemplateDialog:
             messagebox.showwarning("Uyarı", "İsim boş olamaz!")
             return
 
+        # Get selected group (folder-safe way)
+        selected_group = self.manager.get_selected_group()
+        if selected_group is None:
+            messagebox.showerror("Hata", "Seçili grup bulunamadı!")
+            return
+
         try:
             pre = int(self.pre_entry.get())
             hold = int(self.hold_entry.get())
@@ -983,13 +998,17 @@ class EditTemplateDialog:
         except:
             pre = hold = post = 1
 
-        # Yeni görsel varsa kaydet
+        # Yeni görsel varsa grup klasörüne kaydet
         if self.new_image is not None:
+            group_name = selected_group.get('name', 'Default')
+            safe_group_name = get_safe_folder_name(group_name)
+            group_folder = get_group_images_folder(IMAGES_FOLDER, group_name)
             filename = f"{name}.png"
-            filepath = IMAGES_FOLDER / filename
+            filepath = group_folder / filename
             try:
                 self.new_image.save(filepath, 'PNG')
-                self.template['file'] = filename
+                # Store relative path: groupName/filename.png
+                self.template['file'] = f"{safe_group_name}/{filename}"
             except Exception as e:
                 messagebox.showerror("Hata", f"Görsel kaydedilemedi: {e}")
                 return
@@ -1008,12 +1027,6 @@ class EditTemplateDialog:
         # Makro bilgisi
         self.template['use_macro'] = self.use_macro_var.get()
         self.template['macro'] = self.macro_list
-
-        # Get selected group (folder-safe way)
-        selected_group = self.manager.get_selected_group()
-        if selected_group is None:
-            messagebox.showerror("Hata", "Seçili grup bulunamadı!")
-            return
 
         selected_group['templates'][self.index] = self.template
         self.manager.refresh_template_list()

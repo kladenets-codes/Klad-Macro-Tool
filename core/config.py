@@ -345,6 +345,40 @@ def find_parent_and_index(items: List[Dict], item_id: str, parent: Optional[List
     return None
 
 
+def get_safe_folder_name(name: str) -> str:
+    """
+    Convert a name to a safe folder name (Windows compatible).
+
+    Args:
+        name: Original name
+
+    Returns:
+        Safe folder name with invalid characters removed
+    """
+    # Windows'ta geçersiz karakterler: < > : " / \ | ? *
+    invalid_chars = '<>:"/\\|?*'
+    safe_name = "".join(c for c in name if c not in invalid_chars)
+    # Boş ise default isim ver
+    return safe_name.strip() or "Default"
+
+
+def get_group_images_folder(images_folder: Path, group_name: str) -> Path:
+    """
+    Get or create group's images folder.
+
+    Args:
+        images_folder: Base images folder path
+        group_name: Name of the group
+
+    Returns:
+        Path to the group's images folder
+    """
+    safe_name = get_safe_folder_name(group_name)
+    folder = images_folder / safe_name
+    folder.mkdir(exist_ok=True)
+    return folder
+
+
 def insert_item_at(items: List[Dict], item: Dict, target_parent: List[Dict], target_index: int) -> bool:
     """
     Insert an item at a specific position (after removing it from its current location).
@@ -391,3 +425,70 @@ def insert_item_at(items: List[Dict], item: Dict, target_parent: List[Dict], tar
         target_parent.insert(target_index, item)
 
     return True
+
+
+def migrate_images_to_group_folders(groups: List[Dict], images_folder: Path) -> Tuple[int, int]:
+    """
+    Migrate existing images to group-based folder structure.
+
+    This function moves images from the root images folder to group-specific
+    subfolders and updates the template file paths accordingly.
+
+    Args:
+        groups: List of group configurations (can include folders)
+        images_folder: Path to the images folder
+
+    Returns:
+        Tuple of (migrated_count, skipped_count)
+    """
+    migrated = 0
+    skipped = 0
+
+    def migrate_group(group: Dict):
+        nonlocal migrated, skipped
+
+        group_name = group.get('name', 'Default')
+        safe_name = get_safe_folder_name(group_name)
+        group_folder = images_folder / safe_name
+
+        for template in group.get('templates', []):
+            old_file = template.get('file', '')
+
+            # Skip if already in folder structure (contains / or \)
+            if '/' in old_file or '\\' in old_file:
+                skipped += 1
+                continue
+
+            # Skip if file doesn't exist
+            old_path = images_folder / old_file
+            if not old_path.exists():
+                skipped += 1
+                continue
+
+            try:
+                # Create group folder if needed
+                group_folder.mkdir(exist_ok=True)
+
+                # Move file to group folder
+                new_path = group_folder / old_file
+                if not new_path.exists():
+                    old_path.rename(new_path)
+
+                # Update template file path
+                template['file'] = f"{safe_name}/{old_file}"
+                migrated += 1
+                logger.info(f"Migrated: {old_file} -> {safe_name}/{old_file}")
+
+            except Exception as e:
+                logger.error(f"Failed to migrate {old_file}: {e}")
+                skipped += 1
+
+    def process_items(items: List[Dict]):
+        for item in items:
+            if item.get('type') == 'folder':
+                process_items(item.get('items', []))
+            elif item.get('type') == 'group':
+                migrate_group(item)
+
+    process_items(groups)
+    return migrated, skipped

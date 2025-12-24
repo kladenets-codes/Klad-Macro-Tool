@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
 from .constants import EXPORT_START_MARKER, EXPORT_END_MARKER
+from .config import get_safe_folder_name
 
 logger = logging.getLogger(__name__)
 
@@ -84,17 +85,26 @@ def parse_import_code(import_code: str, images_folder: Path) -> Tuple[Optional[D
         # Assign new ID
         group['id'] = str(uuid.uuid4())
 
-        # Extract and save template images
+        # Get group name for folder
+        group_name = group.get('name', 'Imported')
+        safe_group_name = get_safe_folder_name(group_name)
+
+        # Create group folder
+        group_folder = images_folder / safe_group_name
+        group_folder.mkdir(exist_ok=True)
+
+        # Extract and save template images to group folder
         for template in group.get('templates', []):
             if 'image_data' in template and template['image_data']:
                 try:
                     img_data = base64.b64decode(template['image_data'])
                     new_filename = f"imported_{uuid.uuid4().hex[:8]}.png"
-                    img_path = images_folder / new_filename
+                    img_path = group_folder / new_filename
                     with open(img_path, 'wb') as f:
                         f.write(img_data)
-                    template['file'] = new_filename
-                    logger.info(f"Imported image: {new_filename}")
+                    # Store relative path: groupName/filename.png
+                    template['file'] = f"{safe_group_name}/{new_filename}"
+                    logger.info(f"Imported image: {safe_group_name}/{new_filename}")
                 except Exception as e:
                     logger.error(f"Failed to import image: {e}")
 

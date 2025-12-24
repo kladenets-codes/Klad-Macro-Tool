@@ -63,6 +63,7 @@ from core import (
     remove_item_by_id,
     find_parent_and_index,
     insert_item_at,
+    migrate_images_to_group_folders,
 )
 
 # UI module imports - lazy loaded for faster startup
@@ -3432,6 +3433,14 @@ Kullanım:
         """Load config from JSON"""
         try:
             self.groups, self.global_settings, self.presets = core_load_config(CONFIG_FILE)
+
+            # Migrate images to group folders (one-time migration)
+            migrated, skipped = migrate_images_to_group_folders(self.groups, IMAGES_FOLDER)
+            if migrated > 0:
+                # Save config with updated file paths
+                core_save_config(CONFIG_FILE, self.groups, self.global_settings, self.presets)
+                logging.info(f"Image migration complete: {migrated} migrated, {skipped} skipped")
+
         except Exception as e:
             messagebox.showerror("Hata", f"Config yüklenemedi: {e}")
             self.groups = [get_default_group()]

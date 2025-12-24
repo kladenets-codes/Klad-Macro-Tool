@@ -9,8 +9,13 @@ import tkinter as tk
 from PIL import ImageTk, ImageGrab
 import keyboard
 import uuid
+from pathlib import Path
 
 from core.keyboard_utils import get_physical_key_name
+from core.config import get_safe_folder_name
+
+# Images folder path
+IMAGES_FOLDER = Path(__file__).parent.parent.parent / "images"
 
 
 class AddGroupDialog:
@@ -233,6 +238,8 @@ class EditGroupDialog:
         self.selected_key = self.group.get('toggle_key')
         self.spam_key = self.group.get('spam_key')
         self.search_region = self.group.get('search_region', [430, 275, 750, 460])
+        # Store original name for folder rename
+        self.original_name = self.group.get('name', '')
 
         self.top = ctk.CTkToplevel(parent)
         self.top.title(f"Grubu Düzenle: {self.group['name']}")
@@ -383,6 +390,25 @@ class EditGroupDialog:
             post = int(self.post_entry.get()) if self.post_entry.get() else 1
         except:
             pre = hold = post = 1
+
+        # Handle folder rename if name changed
+        old_safe_name = get_safe_folder_name(self.original_name)
+        new_safe_name = get_safe_folder_name(name)
+
+        if old_safe_name != new_safe_name:
+            old_folder = IMAGES_FOLDER / old_safe_name
+            new_folder = IMAGES_FOLDER / new_safe_name
+
+            if old_folder.exists() and not new_folder.exists():
+                try:
+                    old_folder.rename(new_folder)
+                    # Update template file paths
+                    for template in self.group.get('templates', []):
+                        old_file = template.get('file', '')
+                        if old_file.startswith(f"{old_safe_name}/"):
+                            template['file'] = old_file.replace(f"{old_safe_name}/", f"{new_safe_name}/", 1)
+                except Exception as e:
+                    messagebox.showwarning("Uyarı", f"Klasör yeniden adlandırılamadı: {e}")
 
         self.group['name'] = name
         self.group['toggle_key'] = self.selected_key

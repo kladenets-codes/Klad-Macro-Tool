@@ -63,6 +63,9 @@ from .config import (
     remove_item_by_id,
     find_parent_and_index,
     insert_item_at,
+    get_safe_folder_name,
+    get_group_images_folder,
+    migrate_images_to_group_folders,
 )
 
 from .export_import import (
@@ -118,6 +121,9 @@ __all__ = [
     'remove_item_by_id',
     'find_parent_and_index',
     'insert_item_at',
+    'get_safe_folder_name',
+    'get_group_images_folder',
+    'migrate_images_to_group_folders',
 
     # Export/Import
     'generate_export_code',

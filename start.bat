@@ -1,54 +1,53 @@
 @echo off
-chcp 65001 >nul 2>&1
 cd /d "%~dp0"
 title Klad Macro Tool - Launcher
 
 echo.
-echo  ╔═══════════════════════════════════════╗
-echo  ║      KLAD MACRO TOOL LAUNCHER         ║
-echo  ╚═══════════════════════════════════════╝
+echo  ========================================
+echo       KLAD MACRO TOOL LAUNCHER
+echo  ========================================
 echo.
 
-REM ══════════════════════════════════════════
-echo  [ADIM 1/3] Python Kontrolu
-echo  ─────────────────────────────────────────
+REM Step 1: Python Check
+echo  [STEP 1/3] Python Check
+echo  ----------------------------------------
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo    [X] Python bulunamadi!
+    echo    [X] Python not found!
     echo.
-    echo    [i] Python yukleniyor...
-    echo        Kaynak: winget / Python 3.12
+    echo    [i] Installing Python...
+    echo        Source: winget / Python 3.12
     echo.
     winget install Python.Python.3.12 --silent --accept-package-agreements --accept-source-agreements
     if %errorlevel% neq 0 (
         echo.
-        echo    [!] Kurulum basarisiz!
-        echo        Manuel yukleyin: https://python.org/downloads
+        echo    [!] Installation failed!
+        echo        Manual install: https://python.org/downloads
         pause
         exit /b 1
     )
     echo.
-    echo    [OK] Python yuklendi!
-    echo    [i] Lutfen start.bat'i tekrar calistirin.
+    echo    [OK] Python installed!
+    echo    [i] Please run start.bat again.
     echo.
     pause
     exit /b 0
 )
 
 for /f "tokens=2" %%v in ('python --version 2^>^&1') do set pyver=%%v
-echo    [OK] Python %pyver% mevcut
+echo    [OK] Python %pyver% found
 echo.
 
-REM ══════════════════════════════════════════
-echo  [ADIM 2/3] Paket Kontrolu
-echo  ─────────────────────────────────────────
+REM Step 2: Package Check
+echo  [STEP 2/3] Package Check
+echo  ----------------------------------------
 
-echo    [i] Paketler kontrol ediliyor...
+echo    [i] Checking packages...
 python -c "import cv2, keyboard, mss, customtkinter, numpy, PIL, psutil" >nul 2>&1
 if %errorlevel% neq 0 (
-    echo    [!] Eksik paketler bulundu
+    echo    [!] Missing packages found
     echo.
-    echo    [i] Paketler yukleniyor...
+    echo    [i] Installing packages...
     echo        - opencv-python
     echo        - keyboard
     echo        - mss
@@ -60,28 +59,28 @@ if %errorlevel% neq 0 (
     python -m pip install -r requirements.txt --disable-pip-version-check
     if %errorlevel% neq 0 (
         echo.
-        echo    [X] Paket yuklemesi basarisiz!
+        echo    [X] Package installation failed!
         pause
         exit /b 1
     )
     echo.
-    echo    [OK] Tum paketler yuklendi!
+    echo    [OK] All packages installed!
 ) else (
-    echo    [OK] Tum paketler mevcut
+    echo    [OK] All packages found
 )
 echo.
 
-REM ══════════════════════════════════════════
-echo  [ADIM 3/3] Uygulama Baslatiliyor
-echo  ─────────────────────────────────────────
-echo    [i] klad_macro_tool.py baslatiliyor...
+REM Step 3: Launch Application
+echo  [STEP 3/3] Launching Application
+echo  ----------------------------------------
+echo    [i] Starting klad_macro_tool.py...
 echo.
 
 start "" pythonw klad_macro_tool.py
 
-echo    [OK] Uygulama baslatildi!
+echo    [OK] Application started!
 echo.
-echo  ═══════════════════════════════════════════
-echo    Pencere 3 saniye icinde kapanacak...
-echo  ═══════════════════════════════════════════
+echo  ========================================
+echo    Window will close in 3 seconds...
+echo  ========================================
 timeout /t 3 >nul

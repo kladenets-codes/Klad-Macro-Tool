@@ -6,6 +6,26 @@ Groups System with Multiprocessing
 # Windows'ta konsol penceresini gizle
 import sys
 import os
+import traceback
+from datetime import datetime
+
+# Log dosyası ayarları - en başta tanımla
+LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "error_log.txt")
+
+def write_error_log(error_msg: str, exc_info=None):
+    """Hata mesajını log dosyasına yaz"""
+    try:
+        with open(LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write(f"\n{'='*60}\n")
+            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]\n")
+            f.write(f"{error_msg}\n")
+            if exc_info:
+                f.write(f"\nTraceback:\n")
+                f.write(traceback.format_exc())
+            f.write(f"{'='*60}\n")
+    except:
+        pass  # Log yazma başarısız olursa sessizce geç
+
 if sys.platform == "win32":
     import ctypes
     # Konsol penceresini gizle (GUI uygulaması olarak çalış)
@@ -15,56 +35,81 @@ if sys.platform == "win32":
     if hwnd:
         user32.ShowWindow(hwnd, 0)  # SW_HIDE = 0
 
-import customtkinter as ctk
-from tkinter import messagebox
-import tkinter as tk
-import cv2
-import numpy as np
-from pathlib import Path
-from PIL import Image, ImageTk
-import keyboard
-import time
-import multiprocessing
-from multiprocessing import Process, Queue, Value
-import logging
-import copy
+# Import hatalarını yakala
+try:
+    import customtkinter as ctk
+    from tkinter import messagebox
+    import tkinter as tk
+    import cv2
+    import numpy as np
+    from pathlib import Path
+    from PIL import Image, ImageTk
+    import keyboard
+    import time
+    import multiprocessing
+    from multiprocessing import Process, Queue, Value
+    import logging
+    import copy
 
-# Core module imports
-from core import (
-    # Version
-    VERSION,
-    COMMIT_HASH,
-    # Constants
-    COLORS,
-    LOG_COLORS,
-    MACRO_ACTION_COLORS,
-    MACRO_ACTION_LABELS,
-    STATUS_CHECK_INTERVAL_MS,
-    TEST_CYCLE_INTERVAL_MS,
-    DEFAULT_TIMING,
-    DEFAULT_SEARCH_REGION,
-    EXPORT_START_MARKER,
-    EXPORT_END_MARKER,
-    MIN_REGION_SIZE,
+    # Core module imports
+    from core import (
+        # Version
+        VERSION,
+        COMMIT_HASH,
+        # Constants
+        COLORS,
+        LOG_COLORS,
+        MACRO_ACTION_COLORS,
+        MACRO_ACTION_LABELS,
+        STATUS_CHECK_INTERVAL_MS,
+        TEST_CYCLE_INTERVAL_MS,
+        DEFAULT_TIMING,
+        DEFAULT_SEARCH_REGION,
+        EXPORT_START_MARKER,
+        EXPORT_END_MARKER,
+        MIN_REGION_SIZE,
 
-    # Functions
-    group_worker,
-    load_config as core_load_config,
-    save_config as core_save_config,
-    get_conflicting_keys,
-    check_missing_template_images,
-    is_hotkey_used,
-    generate_export_code,
-    parse_import_code,
-    get_default_group,
-    get_default_folder,
-    flatten_groups,
-    find_item_by_id,
-    remove_item_by_id,
-    find_parent_and_index,
-    insert_item_at,
-    migrate_images_to_group_folders,
-)
+        # Functions
+        group_worker,
+        load_config as core_load_config,
+        save_config as core_save_config,
+        get_conflicting_keys,
+        check_missing_template_images,
+        is_hotkey_used,
+        generate_export_code,
+        parse_import_code,
+        get_default_group,
+        get_default_folder,
+        flatten_groups,
+        find_item_by_id,
+        remove_item_by_id,
+        find_parent_and_index,
+        insert_item_at,
+        migrate_images_to_group_folders,
+    )
+except ImportError as e:
+    error_msg = f"Gerekli paket bulunamadı: {e.name if hasattr(e, 'name') else str(e)}"
+    write_error_log(error_msg, exc_info=True)
+
+    # Kullanıcıya hata mesajı göster
+    try:
+        import tkinter as tk
+        from tkinter import messagebox as mb
+        root = tk.Tk()
+        root.withdraw()
+        mb.showerror(
+            "Klad Macro Tool - Import Hatası",
+            f"{error_msg}\n\nLütfen start.bat ile uygulamayı başlatın veya eksik paketleri yükleyin.\n\nDetaylar: {LOG_FILE}"
+        )
+        root.destroy()
+    except:
+        pass
+
+    sys.exit(1)
+except Exception as e:
+    error_msg = f"Başlatma hatası: {type(e).__name__}: {str(e)}"
+    write_error_log(error_msg, exc_info=True)
+    sys.exit(1)
 
 # UI module imports - lazy loaded for faster startup
 # Dialog classes are imported when first needed
@@ -3578,4 +3623,24 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        error_msg = f"Uygulama başlatılamadı: {type(e).__name__}: {str(e)}"
+        write_error_log(error_msg, exc_info=True)
+
+        # Kullanıcıya hata mesajı göster
+        try:
+            import tkinter as tk
+            from tkinter import messagebox as mb
+            root = tk.Tk()
+            root.withdraw()
+            mb.showerror(
+                "Klad Macro Tool - Hata",
+                f"{error_msg}\n\nDetaylar için error_log.txt dosyasını kontrol edin:\n{LOG_FILE}"
+            )
+            root.destroy()
+        except:
+            pass  # GUI gösterilemezse sessizce geç
+
+        sys.exit(1)
